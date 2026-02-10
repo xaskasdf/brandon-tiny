@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# Data files (large)
+data/wikitext/*.pkl
+data/wikitext/*.bin
+data/wikipedia/
+*.parquet
+
+# Checkpoints (large binary files)
+checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+wandb/
+
+# Keep tokenizer and small data
+!data/tokenizer*.model
+!data/tokenizer*.vocab
+!data/chat/*.jsonl

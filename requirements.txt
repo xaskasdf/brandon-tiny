@@ -1,0 +1,20 @@
+# TinyLlama Training Requirements
+
+# Core ML
+torch>=2.1.0
+numpy>=1.24.0
+
+# Tokenizer
+sentencepiece>=0.1.99
+
+# Data processing
+datasets>=2.14.0
+pyarrow>=14.0.0
+tqdm>=4.66.0
+
+# Training utilities
+wandb>=0.16.0
+pyyaml>=6.0
+
+# Evaluation
+tiktoken>=0.5.0

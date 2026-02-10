@@ -1,0 +1,77 @@
+# TinyLlama 110M Configuration
+# For cloud training on GPU cluster
+
+model:
+  dim: 768
+  n_layers: 12
+  n_heads: 12
+  n_kv_heads: 12  # Full MHA (no GQA for this size)
+  vocab_size: 32000
+  hidden_dim: 2048  # FFN hidden dimension (typically 8/3 * dim rounded)
+  max_seq_len: 1024
+  dropout: 0.0  # No dropout for larger model
+  weight_tying: true
+  norm_eps: 1e-5
+
+tokenizer:
+  type: "llama"  # Use Llama 2 tokenizer
+  vocab_size: 32000
+  model_path: "data/tokenizer_32k.model"
+
+# Pre-training configuration
+pretrain:
+  dataset: "wikipedia"
+  data_path: "data/wikipedia"
+  batch_size: 32  # Per GPU
+  gradient_accumulation_steps: 4
+  learning_rate: 5.0e-4
+  min_lr: 5.0e-5
+  warmup_iters: 1000
+  max_iters: 100000
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 1000
+  eval_iters: 200
+  log_interval: 10
+  save_interval: 5000
+  dtype: "bfloat16"
+  compile: true  # Enable torch.compile for speed
+
+# Fine-tuning configuration
+finetune:
+  dataset: "chat"
+  data_path: "data/chat"
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-5
+  min_lr: 2.0e-6
+  warmup_iters: 200
+  max_iters: 5000
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 250
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 500
+  dtype: "bfloat16"
+  compile: true
+  mask_targets_only: true
+
+# Generation config
+generation:
+  max_new_tokens: 256
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+
+# Distributed training
+distributed:
+  backend: "nccl"
+  strategy: "ddp"  # or fsdp for larger scale
+
+# Paths
+output_dir: "checkpoints/110m"
