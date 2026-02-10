@@ -1,0 +1,73 @@
+# TinyLlama 900K Configuration
+# Sub-1M model with larger vocabulary for better tokenization
+# Target: ~900K parameters
+
+model:
+  dim: 72
+  n_layers: 7          # 7 capas = ~990K params (sub-1M)
+  n_heads: 4
+  n_kv_heads: 2        # GQA: 2 KV heads shared across 4 query heads
+  vocab_size: 8192     # 8x más tokens = mejor tokenización
+  hidden_dim: 192      # FFN hidden dimension
+  max_seq_len: 256     # Secuencias más largas
+  dropout: 0.1
+  weight_tying: true
+  norm_eps: 1e-5
+
+tokenizer:
+  type: "custom"
+  vocab_size: 8192
+  model_path: "data/tokenizer_8k.model"
+
+# Pre-training configuration
+pretrain:
+  dataset: "wikitext"
+  data_path: "data/wikitext"
+  batch_size: 48
+  gradient_accumulation_steps: 2
+  learning_rate: 8.0e-4
+  min_lr: 8.0e-5
+  warmup_iters: 500
+  max_iters: 15000     # Más iteraciones para modelo más grande
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 100
+  log_interval: 10
+  save_interval: 1000
+  dtype: "bfloat16"
+  compile: false
+
+# Fine-tuning configuration
+finetune:
+  dataset: "chat"
+  data_path: "data/chat"
+  batch_size: 24
+  gradient_accumulation_steps: 2
+  learning_rate: 1.0e-5
+  min_lr: 1.0e-6
+  warmup_iters: 100
+  max_iters: 5000
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 250
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 500
+  dtype: "bfloat16"
+  compile: false
+  mask_targets_only: true
+
+# Generation config
+generation:
+  max_new_tokens: 128
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+
+# Paths
+output_dir: "checkpoints/900k"
