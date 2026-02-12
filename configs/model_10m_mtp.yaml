@@ -1,0 +1,81 @@
+# TinyLlama 10M MTP - Multi-Token Prediction experiment
+# Same architecture as 10m_v2 but with n_predict=4
+# Uses forward curriculum: k=1→4 over first 40% of training (research shows SLMs need this)
+# Hypothesis: MTP gives better data efficiency and representations
+
+model:
+  dim: 256
+  n_layers: 24
+  n_heads: 8
+  n_kv_heads: 2
+  vocab_size: 8192
+  hidden_dim: 720
+  max_seq_len: 512
+  dropout: 0.05
+  weight_tying: true
+  norm_eps: 1e-5
+  rope_theta: 10000.0
+  block_sharing: true
+  n_predict: 4              # Predict next 4 tokens simultaneously
+
+tokenizer:
+  type: "custom"
+  vocab_size: 8192
+  model_path: "data/tokenizer_8k.model"
+
+# Pre-training: TinyStories (same data as 10m_v2 for fair comparison)
+pretrain:
+  dataset: "textfile"
+  data_path: "data/tinystories"
+  batch_size: 32
+  gradient_accumulation_steps: 4
+  learning_rate: 8.0e-4
+  min_lr: 8.0e-5
+  warmup_iters: 500
+  max_iters: 15000
+  lr_schedule: "wsd"
+  stable_frac: 0.7
+  decay_frac: 0.2
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 100
+  log_interval: 10
+  save_interval: 2000
+  mtp_curriculum: true           # Gradually ramp k=1→4 (critical for small models)
+  mtp_warmup_frac: 0.4           # First 40% of training (6000 steps)
+  dtype: "bfloat16"
+  compile: false
+
+# Fine-tuning (MTP auto-disabled with target_mask)
+finetune:
+  dataset: "chat"
+  data_path: "data/chat"
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-5
+  min_lr: 2.0e-6
+  warmup_iters: 200
+  max_iters: 10000
+  lr_schedule: "cosine"
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 1000
+  dtype: "bfloat16"
+  compile: false
+  mask_targets_only: true
+
+generation:
+  max_new_tokens: 256
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+
+output_dir: "checkpoints/10m_mtp"

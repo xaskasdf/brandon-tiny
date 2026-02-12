@@ -1,0 +1,77 @@
+# TinyLlama 10M v2 - Deep-Narrow Architecture
+# Based on MobileLLM research: more layers + smaller dim = better
+# Target: ~10M parameters with block sharing
+
+model:
+  dim: 256
+  n_layers: 24              # Deep! (was 8) - 12 unique with sharing
+  n_heads: 8
+  n_kv_heads: 2             # Aggressive GQA
+  vocab_size: 8192
+  hidden_dim: 720            # ~2.8x dim for SwiGLU
+  max_seq_len: 512
+  dropout: 0.05
+  weight_tying: true
+  norm_eps: 1e-5
+  rope_theta: 10000.0
+  block_sharing: true        # MobileLLM: share adjacent layer pairs
+
+tokenizer:
+  type: "custom"
+  vocab_size: 8192
+  model_path: "data/tokenizer_8k.model"
+
+# Pre-training: TinyStories (~470M tokens, ~47 tokens/param)
+pretrain:
+  dataset: "textfile"
+  data_path: "data/tinystories"
+  batch_size: 32
+  gradient_accumulation_steps: 4
+  learning_rate: 8.0e-4       # Higher LR for small model
+  min_lr: 8.0e-5
+  warmup_iters: 500
+  max_iters: 15000            # ~983M tokens total (2 epochs)
+  lr_schedule: "wsd"          # Warmup-Stable-Decay
+  stable_frac: 0.7            # 70% of training at peak LR
+  decay_frac: 0.2             # 20% cosine decay
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 100
+  log_interval: 10
+  save_interval: 2000
+  dtype: "bfloat16"
+  compile: false
+
+# Fine-tuning
+finetune:
+  dataset: "chat"
+  data_path: "data/chat"
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-5
+  min_lr: 2.0e-6
+  warmup_iters: 200
+  max_iters: 10000
+  lr_schedule: "cosine"
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 1000
+  dtype: "bfloat16"
+  compile: false
+  mask_targets_only: true
+
+generation:
+  max_new_tokens: 256
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+
+output_dir: "checkpoints/10m_v2"

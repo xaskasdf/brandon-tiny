@@ -224,6 +224,76 @@ class WikitextDataset(Dataset):
         return {'input_ids': x, 'labels': y}
 
 
+class TextFileDataset(Dataset):
+    """
+    Dataset for pre-training from plain text files (TinyStories, FineWeb, etc).
+    Tokenizes and caches the data on first load.
+    Uses numpy memory-mapping for minimal RAM usage.
+    """
+
+    def __init__(
+        self,
+        data_dir: str,
+        tokenizer,
+        seq_len: int,
+        split: str = "train"
+    ):
+        self.tokenizer = tokenizer
+        self.seq_len = seq_len
+
+        data_dir = Path(data_dir)
+        text_file = data_dir / f"{split}.txt"
+        npy_cache = data_dir / f"{split}_tokens.npy"
+        pkl_cache = data_dir / f"{split}_tokens.pkl"
+
+        if npy_cache.exists():
+            print(f"Loading memory-mapped tokens from {npy_cache}")
+            self.tokens = np.load(str(npy_cache), mmap_mode='r')
+        elif pkl_cache.exists():
+            print(f"Converting {pkl_cache} to numpy format...")
+            with open(pkl_cache, 'rb') as f:
+                tokens_list = pickle.load(f)
+            tokens_arr = np.array(tokens_list, dtype=np.int32)
+            np.save(str(npy_cache), tokens_arr)
+            del tokens_list, tokens_arr
+            self.tokens = np.load(str(npy_cache), mmap_mode='r')
+            print(f"Saved numpy cache: {npy_cache}")
+        else:
+            if not text_file.exists():
+                raise FileNotFoundError(f"Text file not found: {text_file}")
+            print(f"Tokenizing {text_file} (this may take a while)...")
+            self.tokens = self._tokenize(text_file, npy_cache)
+
+        print(f"Loaded {len(self.tokens):,} tokens for {split}")
+
+    def _tokenize(self, text_file: Path, cache_file: Path) -> np.ndarray:
+        tokens = []
+        line_count = 0
+        with open(text_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.strip():
+                    tokens.extend(self.tokenizer.encode(line.strip()))
+                    line_count += 1
+                    if line_count % 100000 == 0:
+                        print(f"  {line_count:,} lines, {len(tokens):,} tokens...")
+
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        tokens_arr = np.array(tokens, dtype=np.int32)
+        np.save(str(cache_file), tokens_arr)
+        print(f"  Cached {len(tokens_arr):,} tokens to {cache_file}")
+        del tokens
+        return np.load(str(cache_file), mmap_mode='r')
+
+    def __len__(self) -> int:
+        return max(0, len(self.tokens) - self.seq_len)
+
+    def __getitem__(self, idx: int) -> dict:
+        tokens = self.tokens[idx:idx + self.seq_len + 1].astype(np.int64)
+        x = torch.from_numpy(tokens[:-1].copy())
+        y = torch.from_numpy(tokens[1:].copy())
+        return {'input_ids': x, 'labels': y}
+
+
 def create_dataloader(
     dataset: Dataset,
     batch_size: int,

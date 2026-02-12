@@ -35,6 +35,11 @@ class TrainingConfig:
     beta2: float = 0.95
     grad_clip: float = 1.0
 
+    # LR schedule
+    lr_schedule: str = "cosine"  # "cosine" or "wsd" (Warmup-Stable-Decay)
+    stable_frac: float = 0.7    # WSD: fraction of training at peak LR
+    decay_frac: float = 0.2     # WSD: fraction for cosine decay
+
     # Batch
     batch_size: int = 64
     gradient_accumulation_steps: int = 1
@@ -47,6 +52,10 @@ class TrainingConfig:
 
     # Mixed precision
     dtype: str = "bfloat16"  # "float32", "float16", "bfloat16"
+
+    # MTP curriculum
+    mtp_curriculum: bool = False  # Enable gradual MTP ramp-up
+    mtp_warmup_frac: float = 0.4  # Fraction of training to ramp from k=1 to k=n_predict
 
     # Misc
     compile: bool = False
@@ -68,7 +77,12 @@ class TrainingConfig:
 
 def get_lr(step: int, config: TrainingConfig) -> float:
     """
-    Compute learning rate with warmup and cosine decay.
+    Compute learning rate with warmup and cosine decay or WSD schedule.
+
+    WSD (Warmup-Stable-Decay) from MiniCPM:
+      - Warmup: linear ramp to peak LR
+      - Stable: constant at peak LR (majority of training)
+      - Decay: cosine decay to min_lr
 
     Args:
         step: Current training step
@@ -77,17 +91,70 @@ def get_lr(step: int, config: TrainingConfig) -> float:
     Returns:
         Learning rate for this step
     """
-    # Linear warmup
+    # Linear warmup (same for both schedules)
     if step < config.warmup_iters:
         return config.learning_rate * (step + 1) / config.warmup_iters
 
-    # Cosine decay
     if step >= config.max_iters:
         return config.min_lr
 
-    decay_ratio = (step - config.warmup_iters) / (config.max_iters - config.warmup_iters)
-    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
-    return config.min_lr + coeff * (config.learning_rate - config.min_lr)
+    if config.lr_schedule == "wsd":
+        # WSD: Warmup-Stable-Decay
+        remaining = config.max_iters - config.warmup_iters
+        stable_end = config.warmup_iters + int(remaining * config.stable_frac)
+        decay_steps = int(remaining * config.decay_frac)
+        decay_start = config.max_iters - decay_steps
+
+        if step < stable_end:
+            # Stable phase: constant peak LR
+            return config.learning_rate
+        elif step < decay_start:
+            # Transition: still at peak (gap between stable and decay)
+            return config.learning_rate
+        else:
+            # Decay phase: cosine decay
+            decay_ratio = (step - decay_start) / max(1, config.max_iters - decay_start)
+            coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+            return config.min_lr + coeff * (config.learning_rate - config.min_lr)
+    else:
+        # Cosine decay (default)
+        decay_ratio = (step - config.warmup_iters) / (config.max_iters - config.warmup_iters)
+        coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+        return config.min_lr + coeff * (config.learning_rate - config.min_lr)
+
+
+def get_mtp_k(step: int, config: TrainingConfig, n_predict: int) -> int:
+    """
+    Compute number of active MTP heads using forward curriculum.
+
+    Small models struggle with full MTP from the start. This gradually increases
+    from k=1 (standard NTP) to k=n_predict over the warmup fraction of training.
+
+    Schedule for n_predict=4, mtp_warmup_frac=0.4, max_iters=15000:
+      Steps 0-2000:   k=1 (pure NTP)
+      Steps 2000-4000: k=2
+      Steps 4000-6000: k=3
+      Steps 6000+:     k=4 (full MTP)
+
+    Args:
+        step: Current training step
+        config: Training configuration
+        n_predict: Maximum number of tokens to predict (from model config)
+
+    Returns:
+        Number of active prediction heads (1 = NTP only)
+    """
+    if not config.mtp_curriculum or n_predict <= 1:
+        return n_predict
+
+    warmup_steps = int(config.max_iters * config.mtp_warmup_frac)
+    if step >= warmup_steps:
+        return n_predict
+
+    # Each phase adds one more prediction head
+    phase_len = warmup_steps / (n_predict - 1) if n_predict > 1 else 1
+    k = 1 + int(step / phase_len)
+    return min(k, n_predict)
 
 
 class Trainer:
@@ -231,12 +298,13 @@ class Trainer:
         self.model.train()
         return total_loss / count if count > 0 else float('inf')
 
-    def train_step(self, batch: dict) -> float:
+    def train_step(self, batch: dict, mtp_k: Optional[int] = None) -> float:
         """
         Perform a single training step.
 
         Args:
             batch: Batch of training data
+            mtp_k: Number of active MTP heads (curriculum override)
 
         Returns:
             Loss value
@@ -250,7 +318,7 @@ class Trainer:
 
         # Forward pass with mixed precision
         with autocast('cuda', dtype=self.dtype, enabled=self.use_amp):
-            _, loss = self.model(input_ids, labels, target_mask)
+            _, loss = self.model(input_ids, labels, target_mask, n_predict_override=mtp_k)
             loss = loss / self.config.gradient_accumulation_steps
 
         # Backward pass with gradient scaling
@@ -279,11 +347,21 @@ class Trainer:
         running_loss = 0.0
         start_time = time.time()
 
+        # MTP curriculum setup
+        n_predict = getattr(self.model, 'config', None)
+        n_predict = n_predict.n_predict if n_predict and hasattr(n_predict, 'n_predict') else 1
+        if self.config.mtp_curriculum and n_predict > 1:
+            print(f"MTP curriculum enabled: ramping k=1→{n_predict} over "
+                  f"{int(self.config.max_iters * self.config.mtp_warmup_frac)} steps")
+
         while self.step < self.config.max_iters:
             # Update learning rate
             lr = get_lr(self.step, self.config)
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = lr
+
+            # Compute MTP curriculum k
+            mtp_k = get_mtp_k(self.step, self.config, n_predict)
 
             # Accumulate gradients
             accumulated_loss = 0.0
@@ -294,7 +372,7 @@ class Trainer:
                     train_iter = iter(self.train_loader)
                     batch = next(train_iter)
 
-                loss = self.train_step(batch)
+                loss = self.train_step(batch, mtp_k=mtp_k)
                 accumulated_loss += loss
 
             # Gradient clipping
@@ -324,11 +402,13 @@ class Trainer:
                     batch['input_ids'].shape[1]
                 ) / elapsed
 
+                mtp_str = f" | mtp_k={mtp_k}" if n_predict > 1 else ""
                 print(
                     f"step {self.step:6d} | "
                     f"loss {avg_loss:.4f} | "
                     f"lr {lr:.2e} | "
                     f"tok/s {tokens_per_sec:.0f}"
+                    f"{mtp_str}"
                 )
 
                 if self.wandb_run:

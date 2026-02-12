@@ -1,0 +1,78 @@
+# TinyLlama 110M v2 - Deep-Narrow Architecture
+# Based on SmolLM2-135M reference architecture
+# Target: ~111M parameters (cloud training)
+
+model:
+  dim: 576
+  n_layers: 30              # Very deep (SmolLM2-135M style)
+  n_heads: 9
+  n_kv_heads: 3             # GQA 3:1 ratio
+  vocab_size: 32000          # Full Llama tokenizer
+  hidden_dim: 1280           # ~2.2x dim
+  max_seq_len: 1024
+  dropout: 0.0
+  weight_tying: true
+  norm_eps: 1e-5
+  rope_theta: 10000.0
+  block_sharing: false       # No sharing at this scale
+
+tokenizer:
+  type: "llama"
+  vocab_size: 32000
+  model_path: "data/tokenizer_32k.model"
+
+# Pre-training: MiniPile + FineWeb (~2B tokens, ~18 tok/param minimum)
+# For cloud: scale to 10B+ tokens
+pretrain:
+  dataset: "textfile"
+  data_path: "data/minipile"
+  batch_size: 16
+  gradient_accumulation_steps: 8
+  learning_rate: 3.0e-4
+  min_lr: 3.0e-5
+  warmup_iters: 2000
+  max_iters: 100000
+  lr_schedule: "wsd"
+  stable_frac: 0.7
+  decay_frac: 0.2
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 2000
+  eval_iters: 100
+  log_interval: 10
+  save_interval: 10000
+  dtype: "bfloat16"
+  compile: false
+
+# Fine-tuning
+finetune:
+  dataset: "chat"
+  data_path: "data/chat"
+  batch_size: 8
+  gradient_accumulation_steps: 8
+  learning_rate: 5.0e-6
+  min_lr: 5.0e-7
+  warmup_iters: 500
+  max_iters: 20000
+  lr_schedule: "cosine"
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 1000
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 5000
+  dtype: "bfloat16"
+  compile: false
+  mask_targets_only: true
+
+generation:
+  max_new_tokens: 512
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+
+output_dir: "checkpoints/110m_v2"

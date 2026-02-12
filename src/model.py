@@ -1,17 +1,20 @@
 """
-TinyLlama Model Architecture
+TinyLlama Model Architecture v2
 
-Implements Llama 2 style architecture with:
-- RoPE (Rotary Position Embeddings)
-- RMSNorm (instead of LayerNorm)
-- SwiGLU activation in FFN
-- No bias in linear layers
-- Grouped Query Attention (GQA) support
+Optimized based on MobileLLM, SmolLM2, and Phi research:
+- Deep-narrow architecture (more layers, smaller dim)
+- Flash Attention via F.scaled_dot_product_attention
+- Better weight initialization (1/sqrt(fan_in))
+- Block-wise weight sharing (MobileLLM)
+- KV cache for fast generation
+- RoPE with configurable theta
+- SwiGLU activation, RMSNorm, GQA
+- Multi-Token Prediction (MTP) - predict next k tokens simultaneously
 """
 
 import math
-from dataclasses import dataclass
-from typing import Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Optional, Tuple, List
 
 import torch
 import torch.nn as nn
@@ -31,6 +34,12 @@ class ModelConfig:
     dropout: float = 0.15
     weight_tying: bool = True
     norm_eps: float = 1e-5
+    rope_theta: float = 10000.0
+    block_sharing: bool = False  # MobileLLM block-wise weight sharing
+    n_predict: int = 1  # Multi-Token Prediction: predict next k tokens (1=standard)
+    dense_former: bool = False  # DenseFormer DWA (weighted averaging of all layer outputs)
+    value_residual: bool = False  # Value Residual Learning (add layer 0's V to all layers)
+    n_registers: int = 0  # Register tokens (learnable tokens prepended to sequence)
 
     def __post_init__(self):
         """Ensure proper types after initialization."""
@@ -44,6 +53,12 @@ class ModelConfig:
         self.dropout = float(self.dropout)
         self.weight_tying = bool(self.weight_tying)
         self.norm_eps = float(self.norm_eps)
+        self.rope_theta = float(self.rope_theta)
+        self.block_sharing = bool(self.block_sharing)
+        self.n_predict = int(self.n_predict)
+        self.dense_former = bool(self.dense_former)
+        self.value_residual = bool(self.value_residual)
+        self.n_registers = int(self.n_registers)
 
     @classmethod
     def from_yaml(cls, path: str) -> "ModelConfig":
@@ -55,30 +70,27 @@ class ModelConfig:
 
     def param_count(self) -> int:
         """Estimate parameter count."""
-        # Embedding
         embed = self.vocab_size * self.dim
-
-        # Per layer
         head_dim = self.dim // self.n_heads
-        # Attention: Q, K, V projections + output
-        attn_q = self.dim * self.dim  # Q projection
-        attn_kv = 2 * self.dim * (self.n_kv_heads * head_dim)  # K, V projections
-        attn_o = self.dim * self.dim  # Output projection
+
+        attn_q = self.dim * self.dim
+        attn_kv = 2 * self.dim * (self.n_kv_heads * head_dim)
+        attn_o = self.dim * self.dim
         attn = attn_q + attn_kv + attn_o
 
-        # FFN: SwiGLU has 3 projections
         ffn = 3 * self.dim * self.hidden_dim
-
-        # Norms: 2 per layer + 1 final
         norms_per_layer = 2 * self.dim
 
         layer_params = attn + ffn + norms_per_layer
-        all_layers = layer_params * self.n_layers
 
-        # Final norm
+        # Block sharing: only half the layers have unique params
+        if self.block_sharing:
+            unique_layers = (self.n_layers + 1) // 2
+        else:
+            unique_layers = self.n_layers
+        all_layers = layer_params * unique_layers
+
         final_norm = self.dim
-
-        # Output projection (may be tied with embedding)
         output = 0 if self.weight_tying else self.vocab_size * self.dim
 
         return embed + all_layers + final_norm + output
@@ -93,20 +105,15 @@ class RMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Calculate RMS
-        rms = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True) + self.eps)
-        return x / rms * self.weight
+        rms = torch.rsqrt(x.float().pow(2).mean(-1, keepdim=True) + self.eps)
+        return (x.float() * rms).type_as(x) * self.weight
 
 
 def precompute_freqs_cis(dim: int, max_seq_len: int, theta: float = 10000.0) -> torch.Tensor:
     """Precompute rotary embedding frequencies."""
-    # Compute frequencies
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
-    # Compute positions
     t = torch.arange(max_seq_len)
-    # Outer product: [max_seq_len, dim/2]
     freqs = torch.outer(t, freqs)
-    # Complex exponential: e^(i * theta) = cos(theta) + i*sin(theta)
     freqs_cis = torch.polar(torch.ones_like(freqs), freqs)
     return freqs_cis
 
@@ -117,14 +124,11 @@ def apply_rotary_emb(
     freqs_cis: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
     """Apply rotary embeddings to queries and keys."""
-    # Reshape to complex: [..., dim] -> [..., dim/2, 2] -> [..., dim/2] (complex)
     xq_complex = torch.view_as_complex(xq.float().reshape(*xq.shape[:-1], -1, 2))
     xk_complex = torch.view_as_complex(xk.float().reshape(*xk.shape[:-1], -1, 2))
 
-    # Reshape freqs for broadcasting: [seq_len, dim/2] -> [1, seq_len, 1, dim/2]
     freqs_cis = freqs_cis.unsqueeze(0).unsqueeze(2)
 
-    # Apply rotation
     xq_out = torch.view_as_real(xq_complex * freqs_cis).flatten(-2)
     xk_out = torch.view_as_real(xk_complex * freqs_cis).flatten(-2)
 
@@ -132,70 +136,84 @@ def apply_rotary_emb(
 
 
 class Attention(nn.Module):
-    """Multi-head attention with Grouped Query Attention (GQA) support."""
+    """Multi-head attention with GQA + Flash Attention + KV cache."""
 
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.n_heads = config.n_heads
         self.n_kv_heads = config.n_kv_heads
         self.head_dim = config.dim // config.n_heads
-        self.n_rep = self.n_heads // self.n_kv_heads  # How many times to repeat KV
+        self.n_rep = self.n_heads // self.n_kv_heads
+        self.dropout_p = config.dropout
 
-        # Projections (no bias, Llama style)
         self.wq = nn.Linear(config.dim, config.n_heads * self.head_dim, bias=False)
         self.wk = nn.Linear(config.dim, self.n_kv_heads * self.head_dim, bias=False)
         self.wv = nn.Linear(config.dim, self.n_kv_heads * self.head_dim, bias=False)
         self.wo = nn.Linear(config.n_heads * self.head_dim, config.dim, bias=False)
 
-        self.dropout = nn.Dropout(config.dropout)
-
     def forward(
         self,
         x: torch.Tensor,
         freqs_cis: torch.Tensor,
-        mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
+        mask: Optional[torch.Tensor] = None,
+        cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        v_first: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]], torch.Tensor]:
         batch_size, seq_len, _ = x.shape
 
-        # Project to Q, K, V
-        xq = self.wq(x)  # [B, T, n_heads * head_dim]
-        xk = self.wk(x)  # [B, T, n_kv_heads * head_dim]
-        xv = self.wv(x)  # [B, T, n_kv_heads * head_dim]
+        xq = self.wq(x).view(batch_size, seq_len, self.n_heads, self.head_dim)
+        xk = self.wk(x).view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
+        xv = self.wv(x).view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
 
-        # Reshape for multi-head attention
-        xq = xq.view(batch_size, seq_len, self.n_heads, self.head_dim)
-        xk = xk.view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
-        xv = xv.view(batch_size, seq_len, self.n_kv_heads, self.head_dim)
+        # Value Residual Learning: store raw V, add layer 0's V as residual
+        v_out = xv
+        if v_first is not None:
+            xv = xv + v_first
 
         # Apply rotary embeddings
         xq, xk = apply_rotary_emb(xq, xk, freqs_cis)
-
-        # Repeat K, V for GQA
-        if self.n_rep > 1:
-            xk = xk.repeat_interleave(self.n_rep, dim=2)
-            xv = xv.repeat_interleave(self.n_rep, dim=2)
 
         # Transpose for attention: [B, n_heads, T, head_dim]
         xq = xq.transpose(1, 2)
         xk = xk.transpose(1, 2)
         xv = xv.transpose(1, 2)
 
-        # Scaled dot-product attention
-        scores = torch.matmul(xq, xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
+        # KV cache for generation
+        new_cache = None
+        if cache is not None:
+            cached_k, cached_v = cache
+            xk = torch.cat([cached_k, xk], dim=2)
+            xv = torch.cat([cached_v, xv], dim=2)
+            new_cache = (xk, xv)
+        elif not self.training:
+            new_cache = (xk, xv)
 
-        if mask is not None:
-            scores = scores + mask
+        # Repeat KV for GQA
+        if self.n_rep > 1:
+            xk = xk.repeat_interleave(self.n_rep, dim=1)
+            xv = xv.repeat_interleave(self.n_rep, dim=1)
 
-        attn = F.softmax(scores, dim=-1)
-        attn = self.dropout(attn)
+        # Flash Attention via PyTorch SDPA
+        dropout_p = self.dropout_p if self.training else 0.0
 
-        # Apply attention to values
-        output = torch.matmul(attn, xv)  # [B, n_heads, T, head_dim]
+        if cache is not None:
+            # Generation mode: single query token, no causal mask needed
+            output = F.scaled_dot_product_attention(
+                xq, xk, xv, dropout_p=dropout_p, is_causal=False
+            )
+        elif mask is not None:
+            # Training with explicit mask
+            output = F.scaled_dot_product_attention(
+                xq, xk, xv, attn_mask=mask, dropout_p=dropout_p
+            )
+        else:
+            # Training with built-in causal mask (most efficient)
+            output = F.scaled_dot_product_attention(
+                xq, xk, xv, dropout_p=dropout_p, is_causal=True
+            )
 
-        # Reshape back: [B, T, dim]
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
-
-        return self.wo(output)
+        return self.wo(output), new_cache, v_out
 
 
 class FeedForward(nn.Module):
@@ -203,15 +221,12 @@ class FeedForward(nn.Module):
 
     def __init__(self, config: ModelConfig):
         super().__init__()
-        # SwiGLU: gate * swish(x)
-        # We need 3 projections: w1 (gate), w2 (down), w3 (up)
         self.w1 = nn.Linear(config.dim, config.hidden_dim, bias=False)
         self.w2 = nn.Linear(config.hidden_dim, config.dim, bias=False)
         self.w3 = nn.Linear(config.dim, config.hidden_dim, bias=False)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # SwiGLU: w2(SiLU(w1(x)) * w3(x))
         return self.dropout(self.w2(F.silu(self.w1(x)) * self.w3(x)))
 
 
@@ -229,17 +244,18 @@ class TransformerBlock(nn.Module):
         self,
         x: torch.Tensor,
         freqs_cis: torch.Tensor,
-        mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        # Pre-norm attention with residual
-        x = x + self.attention(self.attention_norm(x), freqs_cis, mask)
-        # Pre-norm FFN with residual
+        mask: Optional[torch.Tensor] = None,
+        cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        v_first: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]], torch.Tensor]:
+        attn_out, new_cache, v_out = self.attention(self.attention_norm(x), freqs_cis, mask, cache, v_first)
+        x = x + attn_out
         x = x + self.feed_forward(self.ffn_norm(x))
-        return x
+        return x, new_cache, v_out
 
 
 class TinyLlama(nn.Module):
-    """TinyLlama language model."""
+    """TinyLlama language model v2."""
 
     def __init__(self, config: ModelConfig):
         super().__init__()
@@ -250,9 +266,20 @@ class TinyLlama(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
         # Transformer blocks
-        self.layers = nn.ModuleList([
-            TransformerBlock(config) for _ in range(config.n_layers)
-        ])
+        if config.block_sharing:
+            # MobileLLM: share weights between adjacent layer pairs
+            unique_layers = nn.ModuleList([
+                TransformerBlock(config) for _ in range((config.n_layers + 1) // 2)
+            ])
+            self.layers = nn.ModuleList()
+            for i in range(config.n_layers):
+                self.layers.append(unique_layers[i // 2])
+            # Keep unique_layers alive for parameter counting
+            self._unique_layers = unique_layers
+        else:
+            self.layers = nn.ModuleList([
+                TransformerBlock(config) for _ in range(config.n_layers)
+            ])
 
         # Final norm
         self.norm = RMSNorm(config.dim, config.norm_eps)
@@ -264,89 +291,162 @@ class TinyLlama(nn.Module):
         if config.weight_tying:
             self.output.weight = self.tok_embeddings.weight
 
+        # DenseFormer DWA: learnable weights for cross-layer averaging
+        if config.dense_former:
+            # After layer i, combine h_0..h_{i+1} with learned weights
+            # Shape: [n_layers, n_layers + 1], only lower-triangular used
+            self.dwa_weights = nn.Parameter(torch.zeros(config.n_layers, config.n_layers + 1))
+            # Init: weight 1.0 on latest output = identity at start
+            for i in range(config.n_layers):
+                self.dwa_weights.data[i, i + 1] = 1.0
+
+        # Register tokens: learnable tokens prepended to sequence
+        if config.n_registers > 0:
+            self.register_tokens = nn.Parameter(
+                torch.randn(1, config.n_registers, config.dim) * 0.02
+            )
+
+        # Multi-Token Prediction: extra heads for predicting t+2, t+3, ..., t+k
+        # Each head is a dim->dim transform; all share self.output for final projection
+        if config.n_predict > 1:
+            self.mtp_heads = nn.ModuleList([
+                nn.Sequential(
+                    nn.Linear(config.dim, config.dim, bias=False),
+                    RMSNorm(config.dim, config.norm_eps),
+                )
+                for _ in range(config.n_predict - 1)
+            ])
+
         # Precompute RoPE frequencies
         head_dim = config.dim // config.n_heads
         self.register_buffer(
             "freqs_cis",
-            precompute_freqs_cis(head_dim, config.max_seq_len),
+            precompute_freqs_cis(head_dim, config.max_seq_len * 2, config.rope_theta),
             persistent=False
         )
 
         # Initialize weights
         self.apply(self._init_weights)
+        # Scale residual projections by 1/sqrt(2*n_layers)
+        self._init_residual_scaling()
 
     def _init_weights(self, module: nn.Module):
-        """Initialize weights with small normal distribution."""
+        """Initialize weights with 1/sqrt(fan_in) scaling."""
         if isinstance(module, nn.Linear):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            fan_in = module.weight.shape[1]
+            std = 1.0 / math.sqrt(fan_in)
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            std = 1.0 / math.sqrt(module.weight.shape[1])
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
+
+    def _init_residual_scaling(self):
+        """Scale residual output projections to prevent growth."""
+        scale = 1.0 / math.sqrt(2.0 * self.config.n_layers)
+        for layer in self.layers:
+            # Scale attention output projection
+            layer.attention.wo.weight.data *= scale
+            # Scale FFN output projection
+            layer.feed_forward.w2.weight.data *= scale
 
     def forward(
         self,
         tokens: torch.Tensor,
         targets: Optional[torch.Tensor] = None,
-        target_mask: Optional[torch.Tensor] = None
+        target_mask: Optional[torch.Tensor] = None,
+        n_predict_override: Optional[int] = None
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
-        """
-        Forward pass.
+        """Forward pass for training.
 
         Args:
-            tokens: Input token ids [B, T]
-            targets: Target token ids for loss computation [B, T]
-            target_mask: Mask for selective loss (1 for positions to include)
-
-        Returns:
-            logits: Output logits [B, T, vocab_size]
-            loss: Optional cross-entropy loss
+            tokens: Input token IDs [B, T]
+            targets: Target token IDs [B, T]
+            target_mask: Mask for target-only loss (fine-tuning)
+            n_predict_override: Override number of MTP heads to use (for curriculum)
         """
         batch_size, seq_len = tokens.shape
         assert seq_len <= self.config.max_seq_len, \
             f"Sequence length {seq_len} exceeds max {self.config.max_seq_len}"
 
-        # Token embeddings
         h = self.tok_embeddings(tokens)
         h = self.dropout(h)
 
-        # Get RoPE frequencies for this sequence length
-        freqs_cis = self.freqs_cis[:seq_len]
+        # Register tokens: prepend learnable tokens
+        n_reg = self.config.n_registers
+        if n_reg > 0:
+            regs = self.register_tokens.expand(batch_size, -1, -1)
+            h = torch.cat([regs, h], dim=1)
 
-        # Causal mask
-        mask = torch.triu(
-            torch.full((seq_len, seq_len), float('-inf'), device=tokens.device),
-            diagonal=1
-        )
+        freqs_cis = self.freqs_cis[:seq_len + n_reg]
 
-        # Apply transformer blocks
-        for layer in self.layers:
-            h = layer(h, freqs_cis, mask)
+        # Track layer outputs for DenseFormer DWA
+        all_h = [h] if self.config.dense_former else None
+        v_first = None
 
-        # Final norm and output projection
+        for i, layer in enumerate(self.layers):
+            vf = v_first if self.config.value_residual else None
+            h, _, v_out = layer(h, freqs_cis, mask=None, cache=None, v_first=vf)
+
+            # Value Residual: store layer 0's V for subsequent layers
+            if i == 0 and self.config.value_residual:
+                v_first = v_out
+
+            # DenseFormer DWA: weighted average of all layer outputs
+            if self.config.dense_former:
+                all_h.append(h)
+                w = self.dwa_weights[i, :i + 2]
+                h = sum(w[j] * all_h[j] for j in range(i + 2))
+
+        # Strip register tokens before output
+        if n_reg > 0:
+            h = h[:, n_reg:]
+
         h = self.norm(h)
         logits = self.output(h)
 
-        # Compute loss if targets provided
         loss = None
         if targets is not None:
-            # Shift logits and targets for next-token prediction
-            shift_logits = logits[..., :-1, :].contiguous()
-            shift_targets = targets[..., 1:].contiguous()
+            V = self.config.vocab_size
+            n_predict_active = n_predict_override if n_predict_override is not None else self.config.n_predict
 
-            # Flatten for cross-entropy
-            shift_logits = shift_logits.view(-1, self.config.vocab_size)
-            shift_targets = shift_targets.view(-1)
+            if target_mask is not None or n_predict_active <= 1:
+                # Standard next-token loss (fine-tuning or MTP disabled/curriculum k=1)
+                shift_logits = logits[..., :-1, :].contiguous().view(-1, V)
+                shift_targets = targets[..., 1:].contiguous().view(-1)
 
-            if target_mask is not None:
-                # Apply mask for selective loss (e.g., only assistant tokens)
-                shift_mask = target_mask[..., 1:].contiguous().view(-1)
-                # Compute per-token loss
-                loss = F.cross_entropy(shift_logits, shift_targets, reduction='none')
-                # Apply mask and compute mean over valid tokens
-                loss = (loss * shift_mask).sum() / (shift_mask.sum() + 1e-8)
+                if target_mask is not None:
+                    shift_mask = target_mask[..., 1:].contiguous().view(-1)
+                    loss = F.cross_entropy(shift_logits, shift_targets, reduction='none')
+                    loss = (loss * shift_mask).sum() / (shift_mask.sum() + 1e-8)
+                else:
+                    loss = F.cross_entropy(shift_logits, shift_targets)
             else:
-                loss = F.cross_entropy(shift_logits, shift_targets)
+                # Multi-Token Prediction: average loss over k prediction heads
+                total_loss = torch.zeros(1, device=tokens.device)
+                n_heads_used = 0
+
+                # Head 0: standard next-token (shift=1)
+                shift_logits = logits[..., :-1, :].contiguous().view(-1, V)
+                shift_targets = targets[..., 1:].contiguous().view(-1)
+                total_loss += F.cross_entropy(shift_logits, shift_targets)
+                n_heads_used += 1
+
+                # Extra heads: predict t+2, ..., t+k (limited by curriculum)
+                n_extra = min(n_predict_active - 1, len(self.mtp_heads))
+                for i in range(n_extra):
+                    head = self.mtp_heads[i]
+                    shift = i + 2  # head 0=shift 1, extra heads start at shift 2
+                    if shift >= seq_len:
+                        break
+                    head_logits = self.output(head(h))
+                    s_logits = head_logits[..., :-shift, :].contiguous().view(-1, V)
+                    s_targets = targets[..., shift:].contiguous().view(-1)
+                    total_loss += F.cross_entropy(s_logits, s_targets)
+                    n_heads_used += 1
+
+                loss = total_loss / n_heads_used
 
         return logits, loss
 
@@ -360,73 +460,105 @@ class TinyLlama(nn.Module):
         top_k: int = 40,
         stop_tokens: Optional[list] = None
     ) -> torch.Tensor:
-        """
-        Generate tokens autoregressively.
-
-        Args:
-            tokens: Input token ids [B, T] or [T]
-            max_new_tokens: Maximum number of tokens to generate
-            temperature: Sampling temperature (0 = greedy)
-            top_p: Nucleus sampling threshold
-            top_k: Top-k sampling threshold
-            stop_tokens: List of token ids that stop generation
-
-        Returns:
-            Generated token ids including input tokens
-        """
+        """Generate tokens with KV cache for speed."""
         if tokens.dim() == 1:
             tokens = tokens.unsqueeze(0)
 
         stop_tokens = stop_tokens or []
+        self.eval()
 
-        for _ in range(max_new_tokens):
-            # Truncate to max_seq_len if needed
-            tokens_cond = tokens if tokens.size(1) <= self.config.max_seq_len \
-                else tokens[:, -self.config.max_seq_len:]
+        # Prefill: process all input tokens at once
+        batch_size, seq_len = tokens.shape
+        h = self.tok_embeddings(tokens)
 
-            # Forward pass
-            logits, _ = self.forward(tokens_cond)
-            logits = logits[:, -1, :]  # Last position
+        # Register tokens: prepend
+        n_reg = self.config.n_registers
+        if n_reg > 0:
+            regs = self.register_tokens.expand(batch_size, -1, -1)
+            h = torch.cat([regs, h], dim=1)
 
-            # Apply temperature
+        freqs_cis = self.freqs_cis[:seq_len + n_reg]
+
+        caches = [None] * len(self.layers)
+        all_h = [h] if self.config.dense_former else None
+        v_first = None
+
+        for i, layer in enumerate(self.layers):
+            vf = v_first if self.config.value_residual else None
+            h, caches[i], v_out = layer(h, freqs_cis, mask=None, cache=None, v_first=vf)
+            if i == 0 and self.config.value_residual:
+                v_first = v_out
+            if self.config.dense_former:
+                all_h.append(h)
+                w = self.dwa_weights[i, :i + 2]
+                h = sum(w[j] * all_h[j] for j in range(i + 2))
+
+        # Strip registers for logits
+        if n_reg > 0:
+            h = h[:, n_reg:]
+
+        h = self.norm(h)
+        logits = self.output(h[:, -1:, :])  # Only last position
+
+        # Sample first token
+        generated = tokens
+        for step in range(max_new_tokens):
+            next_logits = logits[:, -1, :]
+
             if temperature > 0:
-                logits = logits / temperature
+                next_logits = next_logits / temperature
 
-                # Top-k filtering
                 if top_k > 0:
-                    v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                    logits[logits < v[:, [-1]]] = float('-inf')
+                    v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
+                    next_logits[next_logits < v[:, [-1]]] = float('-inf')
 
-                # Top-p (nucleus) filtering
                 if top_p < 1.0:
-                    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                    sorted_logits, sorted_indices = torch.sort(next_logits, descending=True)
                     cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-
-                    # Remove tokens with cumulative probability above threshold
                     sorted_indices_to_remove = cumulative_probs > top_p
                     sorted_indices_to_remove[:, 1:] = sorted_indices_to_remove[:, :-1].clone()
                     sorted_indices_to_remove[:, 0] = 0
-
                     indices_to_remove = sorted_indices_to_remove.scatter(
                         1, sorted_indices, sorted_indices_to_remove
                     )
-                    logits[indices_to_remove] = float('-inf')
+                    next_logits[indices_to_remove] = float('-inf')
 
-                # Sample
-                probs = F.softmax(logits, dim=-1)
+                probs = F.softmax(next_logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
-                # Greedy
-                next_token = logits.argmax(dim=-1, keepdim=True)
+                next_token = next_logits.argmax(dim=-1, keepdim=True)
 
-            # Append token
-            tokens = torch.cat([tokens, next_token], dim=1)
+            generated = torch.cat([generated, next_token], dim=1)
 
-            # Check stop tokens
             if next_token.item() in stop_tokens:
                 break
 
-        return tokens
+            if step < max_new_tokens - 1:
+                # Decode step: only process the new token with KV cache
+                pos = seq_len + n_reg + step
+                if pos >= self.config.max_seq_len + n_reg:
+                    break
+
+                h = self.tok_embeddings(next_token)
+                freqs_cis_step = self.freqs_cis[pos:pos+1]
+
+                all_h = [h] if self.config.dense_former else None
+                v_first_step = None
+
+                for i, layer in enumerate(self.layers):
+                    vf = v_first_step if self.config.value_residual else None
+                    h, caches[i], v_out = layer(h, freqs_cis_step, mask=None, cache=caches[i], v_first=vf)
+                    if i == 0 and self.config.value_residual:
+                        v_first_step = v_out
+                    if self.config.dense_former:
+                        all_h.append(h)
+                        w = self.dwa_weights[i, :i + 2]
+                        h = sum(w[j] * all_h[j] for j in range(i + 2))
+
+                h = self.norm(h)
+                logits = self.output(h)
+
+        return generated
 
     def count_parameters(self, trainable_only: bool = True) -> int:
         """Count model parameters."""
@@ -451,47 +583,50 @@ class TinyLlama(nn.Module):
         """Load model from checkpoint."""
         checkpoint = torch.load(path, map_location=device, weights_only=False)
         config = checkpoint['config']
+        # Handle missing config fields from older checkpoints
+        for attr, default in [('dense_former', False), ('value_residual', False),
+                              ('n_registers', 0), ('n_predict', 1)]:
+            if not hasattr(config, attr):
+                setattr(config, attr, default)
         model = cls(config)
         model.load_state_dict(checkpoint['model_state_dict'])
-        return model
+        return model.to(device)
 
 
 def test_model():
     """Test model instantiation and forward pass."""
-    print("Testing TinyLlama model...")
+    print("Testing TinyLlama v2 model...")
 
-    # Test 226K config
-    config_226k = ModelConfig(
-        dim=48, n_layers=7, n_heads=4, n_kv_heads=2,
-        vocab_size=1024, hidden_dim=128, max_seq_len=128,
-        dropout=0.15, weight_tying=True
+    # Test deep-narrow 10M config
+    config_10m = ModelConfig(
+        dim=192, n_layers=16, n_heads=6, n_kv_heads=2,
+        vocab_size=8192, hidden_dim=512, max_seq_len=512,
+        dropout=0.05, weight_tying=True, block_sharing=True
     )
 
-    model_226k = TinyLlama(config_226k)
-    params_226k = model_226k.count_parameters()
-    print(f"226K model parameters: {params_226k:,}")
-    print(f"  Estimated: {config_226k.param_count():,}")
+    model = TinyLlama(config_10m)
+    params = model.count_parameters()
+    print(f"10M v2 model parameters: {params:,}")
+    print(f"  Estimated: {config_10m.param_count():,}")
 
-    # Test forward pass
-    batch = torch.randint(0, 1024, (2, 32))
-    logits, loss = model_226k(batch, batch)
+    # Test forward
+    batch = torch.randint(0, 8192, (2, 64))
+    logits, loss = model(batch, batch)
     print(f"  Forward pass OK: logits {logits.shape}, loss {loss.item():.4f}")
 
-    # Test generation
-    gen = model_226k.generate(batch[0, :5], max_new_tokens=10)
-    print(f"  Generation OK: {gen.shape}")
+    # Test generation with KV cache
+    gen = model.generate(batch[0, :5], max_new_tokens=20, temperature=0.8)
+    print(f"  Generation OK (KV cache): {gen.shape}")
 
-    # Test 110M config
-    config_110m = ModelConfig(
-        dim=768, n_layers=12, n_heads=12, n_kv_heads=12,
-        vocab_size=32000, hidden_dim=2048, max_seq_len=1024,
-        dropout=0.0, weight_tying=True
+    # Test 30M deep-narrow
+    config_30m = ModelConfig(
+        dim=320, n_layers=20, n_heads=8, n_kv_heads=2,
+        vocab_size=8192, hidden_dim=864, max_seq_len=512,
+        dropout=0.0, weight_tying=True, block_sharing=True
     )
 
-    model_110m = TinyLlama(config_110m)
-    params_110m = model_110m.count_parameters()
-    print(f"\n110M model parameters: {params_110m:,}")
-    print(f"  Estimated: {config_110m.param_count():,}")
+    model_30m = TinyLlama(config_30m)
+    print(f"\n30M v2 model parameters: {model_30m.count_parameters():,}")
 
     print("\nAll tests passed!")
 

@@ -7,6 +7,7 @@ Usage:
 """
 
 import argparse
+import math
 import os
 import sys
 from pathlib import Path
@@ -20,7 +21,7 @@ sys.path.insert(0, str(project_root))
 
 from src.model import TinyLlama, ModelConfig
 from src.tokenizer import Tokenizer, train_tokenizer
-from src.data.dataset import WikitextDataset, PretrainDataset, create_dataloader
+from src.data.dataset import WikitextDataset, TextFileDataset, PretrainDataset, create_dataloader
 from src.training.trainer import Trainer, TrainingConfig
 
 
@@ -64,7 +65,26 @@ def main():
         "--resume",
         type=str,
         default=None,
-        help="Path to checkpoint to resume from"
+        help="Path to checkpoint to resume from (restores optimizer/step)"
+    )
+    parser.add_argument(
+        "--checkpoint",
+        type=str,
+        default=None,
+        help="Path to checkpoint to initialize weights from (fresh optimizer/step)"
+    )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=None,
+        help="Override data directory (e.g. data/tinystories, data/fineweb)"
+    )
+    parser.add_argument(
+        "--dataset-type",
+        type=str,
+        default=None,
+        choices=["wikitext", "textfile"],
+        help="Override dataset type"
     )
     parser.add_argument(
         "--device",
@@ -88,8 +108,14 @@ def main():
 
     # Setup paths
     pretrain_config = config.get('pretrain', {})
-    data_path = pretrain_config.get('data_path', 'data/wikitext')
+    data_path = args.data_dir or pretrain_config.get('data_path', 'data/wikitext')
     output_dir = config.get('output_dir', 'checkpoints')
+
+    # Override dataset type if specified
+    if args.dataset_type:
+        pretrain_config['dataset'] = args.dataset_type
+    elif args.data_dir and 'wikitext' not in args.data_dir:
+        pretrain_config['dataset'] = 'textfile'
 
     # Prepare tokenizer
     tokenizer = prepare_tokenizer(config, data_path)
@@ -110,19 +136,35 @@ def main():
 
     # Prepare datasets
     print("Preparing datasets...")
-    train_dataset = WikitextDataset(
-        data_path=data_path,
-        tokenizer=tokenizer,
-        seq_len=model_config.max_seq_len,
-        split="train"
-    )
+    dataset_type = pretrain_config.get('dataset', 'wikitext')
 
-    val_dataset = WikitextDataset(
-        data_path=data_path,
-        tokenizer=tokenizer,
-        seq_len=model_config.max_seq_len,
-        split="validation"
-    )
+    if dataset_type == 'wikitext':
+        train_dataset = WikitextDataset(
+            data_path=data_path,
+            tokenizer=tokenizer,
+            seq_len=model_config.max_seq_len,
+            split="train"
+        )
+        val_dataset = WikitextDataset(
+            data_path=data_path,
+            tokenizer=tokenizer,
+            seq_len=model_config.max_seq_len,
+            split="validation"
+        )
+    else:
+        # Generic text file dataset (tinystories, fineweb, etc)
+        train_dataset = TextFileDataset(
+            data_dir=data_path,
+            tokenizer=tokenizer,
+            seq_len=model_config.max_seq_len,
+            split="train"
+        )
+        val_dataset = TextFileDataset(
+            data_dir=data_path,
+            tokenizer=tokenizer,
+            seq_len=model_config.max_seq_len,
+            split="validation"
+        )
 
     # Create data loaders
     batch_size = pretrain_config.get('batch_size', 64)
@@ -155,12 +197,17 @@ def main():
         beta1=pretrain_config.get('beta1', 0.9),
         beta2=pretrain_config.get('beta2', 0.95),
         grad_clip=pretrain_config.get('grad_clip', 1.0),
+        lr_schedule=pretrain_config.get('lr_schedule', 'cosine'),
+        stable_frac=pretrain_config.get('stable_frac', 0.7),
+        decay_frac=pretrain_config.get('decay_frac', 0.2),
         batch_size=batch_size,
         gradient_accumulation_steps=pretrain_config.get('gradient_accumulation_steps', 1),
         log_interval=pretrain_config.get('log_interval', 10),
         eval_interval=pretrain_config.get('eval_interval', 500),
         eval_iters=pretrain_config.get('eval_iters', 100),
         save_interval=pretrain_config.get('save_interval', 1000),
+        mtp_curriculum=pretrain_config.get('mtp_curriculum', False),
+        mtp_warmup_frac=pretrain_config.get('mtp_warmup_frac', 0.4),
         dtype=pretrain_config.get('dtype', 'bfloat16'),
         compile=pretrain_config.get('compile', False),
         output_dir=os.path.join(output_dir, 'pretrain')
@@ -174,6 +221,13 @@ def main():
         config=train_config,
         device=args.device
     )
+
+    # Load weights from checkpoint (fresh training state)
+    if args.checkpoint:
+        print(f"Loading weights from {args.checkpoint} (fresh optimizer/step)...")
+        ckpt = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
+        model.load_state_dict(ckpt['model_state_dict'])
+        print(f"Loaded model weights from checkpoint")
 
     # Train
     print("\n" + "=" * 50)
@@ -190,5 +244,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import math
     main()

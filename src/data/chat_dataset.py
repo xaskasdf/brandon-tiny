@@ -174,7 +174,12 @@ class InstructionDataset(Dataset):
         print(f"Loaded {len(self.examples)} instruction examples")
 
     def _load_and_convert(self, data_path: str) -> List[List[dict]]:
-        """Load data and convert to ChatML messages format."""
+        """Load data and convert to ChatML messages format.
+
+        Supports two formats:
+        - Instruction format: {"instruction": "...", "input": "...", "output": "..."}
+        - Multi-turn format: {"messages": [{"role": "user", "content": "..."}, ...]}
+        """
         path = Path(data_path)
         examples = []
 
@@ -191,6 +196,19 @@ class InstructionDataset(Dataset):
 
         # Convert to chat format
         for item in raw_data:
+            # Multi-turn format: already has messages
+            if 'messages' in item:
+                messages = []
+                if self.system_prompt:
+                    messages.append({
+                        "role": "system",
+                        "content": self.system_prompt
+                    })
+                messages.extend(item['messages'])
+                examples.append(messages)
+                continue
+
+            # Instruction format: convert to messages
             messages = []
 
             # Add system prompt

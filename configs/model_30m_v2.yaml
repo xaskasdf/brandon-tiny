@@ -1,0 +1,77 @@
+# TinyLlama 30M v2 - Deep-Narrow Architecture
+# Based on MobileLLM/SmolLM2 research
+# Target: ~30M parameters
+
+model:
+  dim: 384
+  n_layers: 28              # Deep (was 12) - 14 unique with sharing
+  n_heads: 8
+  n_kv_heads: 2             # Aggressive GQA
+  vocab_size: 8192
+  hidden_dim: 1344           # ~3.5x dim for SwiGLU
+  max_seq_len: 512
+  dropout: 0.0
+  weight_tying: true
+  norm_eps: 1e-5
+  rope_theta: 10000.0
+  block_sharing: true        # MobileLLM: share adjacent layer pairs
+
+tokenizer:
+  type: "custom"
+  vocab_size: 8192
+  model_path: "data/tokenizer_8k.model"
+
+# Pre-training: SmolLM + FineWeb + MiniPile (~3B tokens, 100 tok/param)
+pretrain:
+  dataset: "textfile"
+  data_path: "data/smollm"
+  batch_size: 24
+  gradient_accumulation_steps: 4
+  learning_rate: 5.0e-4
+  min_lr: 5.0e-5
+  warmup_iters: 1000
+  max_iters: 50000            # ~2.5B tokens
+  lr_schedule: "wsd"
+  stable_frac: 0.7
+  decay_frac: 0.2
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 1000
+  eval_iters: 100
+  log_interval: 10
+  save_interval: 5000
+  dtype: "bfloat16"
+  compile: false
+
+# Fine-tuning
+finetune:
+  dataset: "chat"
+  data_path: "data/chat"
+  batch_size: 12
+  gradient_accumulation_steps: 4
+  learning_rate: 1.0e-5
+  min_lr: 1.0e-6
+  warmup_iters: 300
+  max_iters: 15000
+  lr_schedule: "cosine"
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 2000
+  dtype: "bfloat16"
+  compile: false
+  mask_targets_only: true
+
+generation:
+  max_new_tokens: 256
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+
+output_dir: "checkpoints/30m_v2"
