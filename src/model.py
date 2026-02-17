@@ -40,6 +40,12 @@ class ModelConfig:
     dense_former: bool = False  # DenseFormer DWA (weighted averaging of all layer outputs)
     value_residual: bool = False  # Value Residual Learning (add layer 0's V to all layers)
     n_registers: int = 0  # Register tokens (learnable tokens prepended to sequence)
+    # Dream Architecture fields
+    n_loops: int = 1  # Looped transformer: loop through layers multiple times (1=standard)
+    ternary: bool = False  # BitNet 1.58b: quantize weights to {-1, 0, +1}
+    relu_squared: bool = False  # Use ReLU² FFN (2 matrices) instead of SwiGLU (3 matrices)
+    step_embedding: bool = False  # Add per-loop-iteration embedding (depth embedding)
+    feedback: bool = False  # Feed last layer output back to first layer between loops
 
     def __post_init__(self):
         """Ensure proper types after initialization."""
@@ -59,6 +65,11 @@ class ModelConfig:
         self.dense_former = bool(self.dense_former)
         self.value_residual = bool(self.value_residual)
         self.n_registers = int(self.n_registers)
+        self.n_loops = int(self.n_loops)
+        self.ternary = bool(self.ternary)
+        self.relu_squared = bool(self.relu_squared)
+        self.step_embedding = bool(self.step_embedding)
+        self.feedback = bool(self.feedback)
 
     @classmethod
     def from_yaml(cls, path: str) -> "ModelConfig":
@@ -109,6 +120,67 @@ class RMSNorm(nn.Module):
         return (x.float() * rms).type_as(x) * self.weight
 
 
+class TernaryQuantize(torch.autograd.Function):
+    """BitNet 1.58b: quantize weights to {-1, 0, +1} with straight-through estimator."""
+
+    @staticmethod
+    def forward(ctx, weight):
+        # Absmean quantization: scale = mean(|W|)
+        scale = weight.abs().mean() + 1e-8
+        # Quantize to {-1, 0, +1}
+        weight_q = torch.clamp(torch.round(weight / scale), -1, 1)
+        # Return scaled ternary weights
+        return weight_q * scale
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        # Straight-through estimator: pass gradient unchanged
+        return grad_output
+
+
+class TernaryLinear(nn.Module):
+    """Linear layer with BitNet 1.58b ternary weight quantization.
+
+    Weights are stored in full precision for optimizer updates,
+    but quantized to {-1, 0, +1} in forward pass.
+    """
+
+    def __init__(self, in_features: int, out_features: int, bias: bool = False):
+        super().__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.weight = nn.Parameter(torch.empty(out_features, in_features))
+        if bias:
+            self.bias = nn.Parameter(torch.zeros(out_features))
+        else:
+            self.bias = None
+        # Initialize with standard scaling
+        nn.init.normal_(self.weight, std=1.0 / math.sqrt(in_features))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        w = TernaryQuantize.apply(self.weight)
+        return F.linear(x, w, self.bias)
+
+
+class FeedForwardReLU2(nn.Module):
+    """ReLU² Feed-Forward Network (2 matrices instead of SwiGLU's 3).
+
+    Compatible with ternary quantization. Uses ReLU² activation
+    which produces sparse activations ideal for ternary weights.
+    """
+
+    def __init__(self, config: ModelConfig):
+        super().__init__()
+        Linear = TernaryLinear if config.ternary else nn.Linear
+        self.w1 = Linear(config.dim, config.hidden_dim, bias=False)
+        self.w2 = Linear(config.hidden_dim, config.dim, bias=False)
+        self.dropout = nn.Dropout(config.dropout)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # ReLU²: sparse, gradient-friendly activation
+        return self.dropout(self.w2(F.relu(self.w1(x)).square()))
+
+
 def precompute_freqs_cis(dim: int, max_seq_len: int, theta: float = 10000.0) -> torch.Tensor:
     """Precompute rotary embedding frequencies."""
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
@@ -146,10 +218,11 @@ class Attention(nn.Module):
         self.n_rep = self.n_heads // self.n_kv_heads
         self.dropout_p = config.dropout
 
-        self.wq = nn.Linear(config.dim, config.n_heads * self.head_dim, bias=False)
-        self.wk = nn.Linear(config.dim, self.n_kv_heads * self.head_dim, bias=False)
-        self.wv = nn.Linear(config.dim, self.n_kv_heads * self.head_dim, bias=False)
-        self.wo = nn.Linear(config.n_heads * self.head_dim, config.dim, bias=False)
+        Linear = TernaryLinear if config.ternary else nn.Linear
+        self.wq = Linear(config.dim, config.n_heads * self.head_dim, bias=False)
+        self.wk = Linear(config.dim, self.n_kv_heads * self.head_dim, bias=False)
+        self.wv = Linear(config.dim, self.n_kv_heads * self.head_dim, bias=False)
+        self.wo = Linear(config.n_heads * self.head_dim, config.dim, bias=False)
 
     def forward(
         self,
@@ -221,9 +294,10 @@ class FeedForward(nn.Module):
 
     def __init__(self, config: ModelConfig):
         super().__init__()
-        self.w1 = nn.Linear(config.dim, config.hidden_dim, bias=False)
-        self.w2 = nn.Linear(config.hidden_dim, config.dim, bias=False)
-        self.w3 = nn.Linear(config.dim, config.hidden_dim, bias=False)
+        Linear = TernaryLinear if config.ternary else nn.Linear
+        self.w1 = Linear(config.dim, config.hidden_dim, bias=False)
+        self.w2 = Linear(config.hidden_dim, config.dim, bias=False)
+        self.w3 = Linear(config.dim, config.hidden_dim, bias=False)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -236,7 +310,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.attention = Attention(config)
-        self.feed_forward = FeedForward(config)
+        self.feed_forward = FeedForwardReLU2(config) if config.relu_squared else FeedForward(config)
         self.attention_norm = RMSNorm(config.dim, config.norm_eps)
         self.ffn_norm = RMSNorm(config.dim, config.norm_eps)
 
@@ -292,19 +366,32 @@ class TinyLlama(nn.Module):
             self.output.weight = self.tok_embeddings.weight
 
         # DenseFormer DWA: learnable weights for cross-layer averaging
+        # Note: with looping, DWA is applied per-loop (same weights each loop)
         if config.dense_former:
-            # After layer i, combine h_0..h_{i+1} with learned weights
-            # Shape: [n_layers, n_layers + 1], only lower-triangular used
-            self.dwa_weights = nn.Parameter(torch.zeros(config.n_layers, config.n_layers + 1))
-            # Init: weight 1.0 on latest output = identity at start
-            for i in range(config.n_layers):
+            n_eff = config.n_layers  # layers per loop
+            self.dwa_weights = nn.Parameter(torch.zeros(n_eff, n_eff + 1))
+            for i in range(n_eff):
                 self.dwa_weights.data[i, i + 1] = 1.0
 
         # Register tokens: learnable tokens prepended to sequence
+        # With looping, these act as resonance buffers (refined each loop)
         if config.n_registers > 0:
             self.register_tokens = nn.Parameter(
                 torch.randn(1, config.n_registers, config.dim) * 0.02
             )
+            # Resonance gate: blend updated registers with original between loops
+            if config.n_loops > 1:
+                self.resonance_gate = nn.Parameter(torch.zeros(config.dim))
+
+        # Dream Architecture: looping components
+        if config.step_embedding and config.n_loops > 1:
+            # Per-loop-iteration embedding (like depth embedding)
+            self.step_embeddings = nn.Embedding(config.n_loops, config.dim)
+            nn.init.normal_(self.step_embeddings.weight, std=0.02)
+
+        if config.feedback and config.n_loops > 1:
+            # Feedback projection: compress last layer output for next loop input
+            self.feedback_norm = RMSNorm(config.dim, config.norm_eps)
 
         # Multi-Token Prediction: extra heads for predicting t+2, t+3, ..., t+k
         # Each head is a dim->dim transform; all share self.output for final projection
@@ -351,12 +438,39 @@ class TinyLlama(nn.Module):
             # Scale FFN output projection
             layer.feed_forward.w2.weight.data *= scale
 
+    def _run_layers(self, h, freqs_cis, v_first_in=None):
+        """Run one pass through all transformer layers.
+
+        Returns: (h, v_first) — output hidden states and V anchor for value residual.
+        """
+        all_h = [h] if self.config.dense_former else None
+        v_first = v_first_in
+
+        for i, layer in enumerate(self.layers):
+            vf = v_first if self.config.value_residual else None
+            h, _, v_out = layer(h, freqs_cis, mask=None, cache=None, v_first=vf)
+
+            # Value Residual: store layer 0's V on first encounter
+            if v_first is None and i == 0 and self.config.value_residual:
+                v_first = v_out
+
+            # DenseFormer DWA: weighted average of layer outputs (resets each loop)
+            if self.config.dense_former:
+                all_h.append(h)
+                w = self.dwa_weights[i, :i + 2]
+                h = sum(w[j] * all_h[j] for j in range(i + 2))
+
+        return h, v_first
+
     def forward(
         self,
         tokens: torch.Tensor,
         targets: Optional[torch.Tensor] = None,
         target_mask: Optional[torch.Tensor] = None,
-        n_predict_override: Optional[int] = None
+        n_predict_override: Optional[int] = None,
+        label_smoothing: float = 0.0,
+        unlikelihood_alpha: float = 0.0,
+        entropy_reg_beta: float = 0.0,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Forward pass for training.
 
@@ -365,6 +479,9 @@ class TinyLlama(nn.Module):
             targets: Target token IDs [B, T]
             target_mask: Mask for target-only loss (fine-tuning)
             n_predict_override: Override number of MTP heads to use (for curriculum)
+            label_smoothing: Label smoothing epsilon (0.0=off, 0.1 recommended)
+            unlikelihood_alpha: Unlikelihood training weight (0.0=off, 0.5 recommended)
+            entropy_reg_beta: Entropy regularization weight (0.0=off, 0.01 recommended)
         """
         batch_size, seq_len = tokens.shape
         assert seq_len <= self.config.max_seq_len, \
@@ -380,24 +497,32 @@ class TinyLlama(nn.Module):
             h = torch.cat([regs, h], dim=1)
 
         freqs_cis = self.freqs_cis[:seq_len + n_reg]
-
-        # Track layer outputs for DenseFormer DWA
-        all_h = [h] if self.config.dense_former else None
+        n_loops = self.config.n_loops
         v_first = None
 
-        for i, layer in enumerate(self.layers):
-            vf = v_first if self.config.value_residual else None
-            h, _, v_out = layer(h, freqs_cis, mask=None, cache=None, v_first=vf)
+        for loop in range(n_loops):
+            # Step embedding: add per-loop depth embedding
+            if self.config.step_embedding and n_loops > 1:
+                step_emb = self.step_embeddings(
+                    torch.tensor(loop, device=h.device)
+                )
+                h = h + step_emb
 
-            # Value Residual: store layer 0's V for subsequent layers
-            if i == 0 and self.config.value_residual:
-                v_first = v_out
+            # Feedback: add previous loop's output (normalized) to current input
+            if self.config.feedback and n_loops > 1 and loop > 0:
+                h = h + self.feedback_norm(h_prev)
 
-            # DenseFormer DWA: weighted average of all layer outputs
-            if self.config.dense_former:
-                all_h.append(h)
-                w = self.dwa_weights[i, :i + 2]
-                h = sum(w[j] * all_h[j] for j in range(i + 2))
+            h_prev = h  # save for feedback in next loop
+
+            # Run through all layers
+            h, v_first = self._run_layers(h, freqs_cis, v_first_in=v_first)
+
+            # Resonance gating: blend updated registers with original between loops
+            if n_reg > 0 and n_loops > 1 and loop < n_loops - 1:
+                gate = torch.sigmoid(self.resonance_gate)
+                orig_regs = self.register_tokens.expand(batch_size, -1, -1)
+                h_regs = h[:, :n_reg]
+                h = torch.cat([gate * h_regs + (1 - gate) * orig_regs, h[:, n_reg:]], dim=1)
 
         # Strip register tokens before output
         if n_reg > 0:
@@ -418,10 +543,16 @@ class TinyLlama(nn.Module):
 
                 if target_mask is not None:
                     shift_mask = target_mask[..., 1:].contiguous().view(-1)
-                    loss = F.cross_entropy(shift_logits, shift_targets, reduction='none')
+                    loss = F.cross_entropy(
+                        shift_logits, shift_targets,
+                        reduction='none', label_smoothing=label_smoothing
+                    )
                     loss = (loss * shift_mask).sum() / (shift_mask.sum() + 1e-8)
                 else:
-                    loss = F.cross_entropy(shift_logits, shift_targets)
+                    loss = F.cross_entropy(
+                        shift_logits, shift_targets,
+                        label_smoothing=label_smoothing
+                    )
             else:
                 # Multi-Token Prediction: average loss over k prediction heads
                 total_loss = torch.zeros(1, device=tokens.device)
@@ -430,7 +561,10 @@ class TinyLlama(nn.Module):
                 # Head 0: standard next-token (shift=1)
                 shift_logits = logits[..., :-1, :].contiguous().view(-1, V)
                 shift_targets = targets[..., 1:].contiguous().view(-1)
-                total_loss += F.cross_entropy(shift_logits, shift_targets)
+                total_loss += F.cross_entropy(
+                    shift_logits, shift_targets,
+                    label_smoothing=label_smoothing
+                )
                 n_heads_used += 1
 
                 # Extra heads: predict t+2, ..., t+k (limited by curriculum)
@@ -443,12 +577,77 @@ class TinyLlama(nn.Module):
                     head_logits = self.output(head(h))
                     s_logits = head_logits[..., :-shift, :].contiguous().view(-1, V)
                     s_targets = targets[..., shift:].contiguous().view(-1)
-                    total_loss += F.cross_entropy(s_logits, s_targets)
+                    total_loss += F.cross_entropy(
+                        s_logits, s_targets,
+                        label_smoothing=label_smoothing
+                    )
                     n_heads_used += 1
 
                 loss = total_loss / n_heads_used
 
+            # --- Unlikelihood Training Loss ---
+            if unlikelihood_alpha > 0.0:
+                shift_logits_ul = logits[..., :-1, :].contiguous()
+                shift_input = tokens[..., :-1].contiguous()
+                B, T_ul, _ = shift_logits_ul.shape
+
+                probs_ul = torch.softmax(shift_logits_ul, dim=-1)
+                one_minus = torch.clamp(1.0 - probs_ul, min=1e-5)
+                ul_log = -torch.log(one_minus)  # (B, T, V)
+
+                # Build mask: for each position, mark tokens seen in previous context
+                prev_mask = torch.zeros_like(ul_log)
+                for t in range(1, T_ul):
+                    # Tokens seen in positions 0..t-1
+                    seen_tokens = shift_input[:, :t]  # (B, t)
+                    prev_mask[:, t].scatter_(1, seen_tokens, 1.0)
+
+                # Apply target mask if present (only penalize on target positions)
+                if target_mask is not None:
+                    shift_tmask = target_mask[..., 1:].contiguous().unsqueeze(-1)
+                    ul_loss = (ul_log * prev_mask * shift_tmask).sum() / (shift_tmask.sum() * V + 1e-8)
+                else:
+                    ul_loss = (ul_log * prev_mask).sum() / (B * T_ul + 1e-8)
+
+                loss = loss + unlikelihood_alpha * ul_loss
+
+            # --- Entropy Regularization ---
+            if entropy_reg_beta > 0.0:
+                shift_logits_ent = logits[..., :-1, :].contiguous().view(-1, V)
+                probs_ent = torch.softmax(shift_logits_ent, dim=-1)
+                log_probs_ent = torch.log_softmax(shift_logits_ent, dim=-1)
+                entropy = -(probs_ent * log_probs_ent).sum(dim=-1)
+
+                if target_mask is not None:
+                    ent_mask = target_mask[..., 1:].contiguous().view(-1)
+                    avg_entropy = (entropy * ent_mask).sum() / (ent_mask.sum() + 1e-8)
+                else:
+                    avg_entropy = entropy.mean()
+
+                # Subtract because we want to MAXIMIZE entropy (minimize negative entropy)
+                loss = loss - entropy_reg_beta * avg_entropy
+
         return logits, loss
+
+    def _run_layers_cached(self, h, freqs_cis, loop_caches, v_first_in=None):
+        """Run one pass through layers with KV cache (for generation).
+
+        Returns: (h, loop_caches, v_first)
+        """
+        all_h = [h] if self.config.dense_former else None
+        v_first = v_first_in
+
+        for i, layer in enumerate(self.layers):
+            vf = v_first if self.config.value_residual else None
+            h, loop_caches[i], v_out = layer(h, freqs_cis, mask=None, cache=loop_caches[i], v_first=vf)
+            if v_first is None and i == 0 and self.config.value_residual:
+                v_first = v_out
+            if self.config.dense_former:
+                all_h.append(h)
+                w = self.dwa_weights[i, :i + 2]
+                h = sum(w[j] * all_h[j] for j in range(i + 2))
+
+        return h, loop_caches, v_first
 
     @torch.no_grad()
     def generate(
@@ -458,62 +657,159 @@ class TinyLlama(nn.Module):
         temperature: float = 0.8,
         top_p: float = 0.9,
         top_k: int = 40,
-        stop_tokens: Optional[list] = None
+        stop_tokens: Optional[list] = None,
+        repetition_penalty: float = 1.0,
+        no_repeat_ngram_size: int = 0,
+        contrastive_search: bool = False,
+        contrastive_alpha: float = 0.6,
+        contrastive_k: int = 6,
     ) -> torch.Tensor:
-        """Generate tokens with KV cache for speed."""
+        """Generate tokens with KV cache for speed. Supports looped models.
+
+        Anti-repetition features:
+            repetition_penalty: Divide logits of seen tokens by this (1.0=off, 1.1-1.3 recommended)
+            no_repeat_ngram_size: Block repeated n-grams (3 recommended, 0=off)
+            contrastive_search: Use contrastive search decoding (overrides sampling)
+            contrastive_alpha: Degeneration penalty weight for contrastive search (0.6 recommended)
+            contrastive_k: Top-k candidates for contrastive search (4-6 recommended)
+        """
         if tokens.dim() == 1:
             tokens = tokens.unsqueeze(0)
 
         stop_tokens = stop_tokens or []
         self.eval()
 
-        # Prefill: process all input tokens at once
         batch_size, seq_len = tokens.shape
+        n_reg = self.config.n_registers
+        n_loops = self.config.n_loops
+        n_layers = len(self.layers)
+
+        # === PREFILL: process all input tokens through all loops ===
         h = self.tok_embeddings(tokens)
 
-        # Register tokens: prepend
-        n_reg = self.config.n_registers
         if n_reg > 0:
             regs = self.register_tokens.expand(batch_size, -1, -1)
             h = torch.cat([regs, h], dim=1)
 
         freqs_cis = self.freqs_cis[:seq_len + n_reg]
 
-        caches = [None] * len(self.layers)
-        all_h = [h] if self.config.dense_former else None
+        # KV cache: [n_loops][n_layers]
+        all_caches = [[None] * n_layers for _ in range(n_loops)]
         v_first = None
 
-        for i, layer in enumerate(self.layers):
-            vf = v_first if self.config.value_residual else None
-            h, caches[i], v_out = layer(h, freqs_cis, mask=None, cache=None, v_first=vf)
-            if i == 0 and self.config.value_residual:
-                v_first = v_out
-            if self.config.dense_former:
-                all_h.append(h)
-                w = self.dwa_weights[i, :i + 2]
-                h = sum(w[j] * all_h[j] for j in range(i + 2))
+        for loop in range(n_loops):
+            if self.config.step_embedding and n_loops > 1:
+                step_emb = self.step_embeddings(torch.tensor(loop, device=h.device))
+                h = h + step_emb
+
+            if self.config.feedback and n_loops > 1 and loop > 0:
+                h = h + self.feedback_norm(h_prev)
+
+            h_prev = h
+            h, all_caches[loop], v_first = self._run_layers_cached(
+                h, freqs_cis, all_caches[loop], v_first_in=v_first
+            )
+
+            if n_reg > 0 and n_loops > 1 and loop < n_loops - 1:
+                gate = torch.sigmoid(self.resonance_gate)
+                orig_regs = self.register_tokens.expand(batch_size, -1, -1)
+                h = torch.cat([gate * h[:, :n_reg] + (1 - gate) * orig_regs, h[:, n_reg:]], dim=1)
 
         # Strip registers for logits
         if n_reg > 0:
             h = h[:, n_reg:]
 
         h = self.norm(h)
-        logits = self.output(h[:, -1:, :])  # Only last position
+        logits = self.output(h[:, -1:, :])
 
-        # Sample first token
+        # === DECODE: generate tokens one at a time ===
         generated = tokens
-        for step in range(max_new_tokens):
-            next_logits = logits[:, -1, :]
+        # Track hidden states for contrastive search
+        if contrastive_search:
+            prev_hidden_states = []
+            # Save last hidden state from prefill
+            prev_hidden_states.append(h[:, -1:, :].clone())
 
-            if temperature > 0:
-                next_logits = next_logits / temperature
+        for step in range(max_new_tokens):
+            next_logits = logits[:, -1, :].clone()
+
+            # --- Repetition penalty ---
+            if repetition_penalty != 1.0:
+                generated_tokens = generated[0].tolist()
+                seen = set(generated_tokens)
+                for token_id in seen:
+                    if next_logits[0, token_id] > 0:
+                        next_logits[0, token_id] /= repetition_penalty
+                    else:
+                        next_logits[0, token_id] *= repetition_penalty
+
+            # --- N-gram blocking ---
+            if no_repeat_ngram_size > 0 and generated.shape[1] >= no_repeat_ngram_size:
+                gen_list = generated[0].tolist()
+                ngram_len = no_repeat_ngram_size
+                # Current (n-1)-gram that would form the start of a repeated n-gram
+                current_ngram_prefix = tuple(gen_list[-(ngram_len - 1):])
+                # Scan all previous n-grams
+                for i in range(len(gen_list) - ngram_len + 1):
+                    prev_prefix = tuple(gen_list[i:i + ngram_len - 1])
+                    if prev_prefix == current_ngram_prefix:
+                        # Ban the token that would complete this n-gram
+                        banned_token = gen_list[i + ngram_len - 1]
+                        next_logits[0, banned_token] = float('-inf')
+
+            # --- Contrastive search decoding ---
+            if contrastive_search and len(prev_hidden_states) > 0:
+                # Get top-k candidates by model confidence
+                cs_k = min(contrastive_k, next_logits.size(-1))
+                top_k_logits, top_k_ids = torch.topk(next_logits, cs_k, dim=-1)
+                top_k_probs = F.softmax(top_k_logits, dim=-1)  # (1, k)
+
+                # Compute hidden states for each candidate
+                best_score = float('-inf')
+                best_token = top_k_ids[0, 0].unsqueeze(0).unsqueeze(0)
+                best_hidden = None
+
+                # Stack all previous hidden states: (1, num_prev, dim)
+                prev_h_stack = torch.cat(prev_hidden_states, dim=1)
+
+                for j in range(cs_k):
+                    cand_id = top_k_ids[0, j]
+                    model_confidence = top_k_probs[0, j].item()
+
+                    # Get candidate's hidden state (approximate from embedding)
+                    cand_h = self.tok_embeddings(cand_id.unsqueeze(0).unsqueeze(0))
+                    cand_h = F.normalize(cand_h, dim=-1)
+                    prev_h_norm = F.normalize(prev_h_stack, dim=-1)
+
+                    # Max cosine similarity with previous tokens
+                    cos_sim = torch.matmul(cand_h, prev_h_norm.transpose(-1, -2))
+                    max_sim = cos_sim.max().item()
+
+                    # Score = model_confidence - alpha * max_similarity
+                    score = model_confidence - contrastive_alpha * max_sim
+
+                    if score > best_score:
+                        best_score = score
+                        best_token = cand_id.unsqueeze(0).unsqueeze(0)
+                        best_hidden = cand_h
+
+                next_token = best_token
+                if best_hidden is not None:
+                    prev_hidden_states.append(best_hidden)
+                    # Keep window to prevent memory issues
+                    if len(prev_hidden_states) > 128:
+                        prev_hidden_states = prev_hidden_states[-64:]
+
+            # --- Standard sampling/greedy ---
+            elif temperature > 0:
+                scaled_logits = next_logits / temperature
 
                 if top_k > 0:
-                    v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
-                    next_logits[next_logits < v[:, [-1]]] = float('-inf')
+                    v, _ = torch.topk(scaled_logits, min(top_k, scaled_logits.size(-1)))
+                    scaled_logits[scaled_logits < v[:, [-1]]] = float('-inf')
 
                 if top_p < 1.0:
-                    sorted_logits, sorted_indices = torch.sort(next_logits, descending=True)
+                    sorted_logits, sorted_indices = torch.sort(scaled_logits, descending=True)
                     cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
                     sorted_indices_to_remove = cumulative_probs > top_p
                     sorted_indices_to_remove[:, 1:] = sorted_indices_to_remove[:, :-1].clone()
@@ -521,9 +817,9 @@ class TinyLlama(nn.Module):
                     indices_to_remove = sorted_indices_to_remove.scatter(
                         1, sorted_indices, sorted_indices_to_remove
                     )
-                    next_logits[indices_to_remove] = float('-inf')
+                    scaled_logits[indices_to_remove] = float('-inf')
 
-                probs = F.softmax(next_logits, dim=-1)
+                probs = F.softmax(scaled_logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
                 next_token = next_logits.argmax(dim=-1, keepdim=True)
@@ -534,7 +830,6 @@ class TinyLlama(nn.Module):
                 break
 
             if step < max_new_tokens - 1:
-                # Decode step: only process the new token with KV cache
                 pos = seq_len + n_reg + step
                 if pos >= self.config.max_seq_len + n_reg:
                     break
@@ -542,18 +837,20 @@ class TinyLlama(nn.Module):
                 h = self.tok_embeddings(next_token)
                 freqs_cis_step = self.freqs_cis[pos:pos+1]
 
-                all_h = [h] if self.config.dense_former else None
+                # Decode through all loops
                 v_first_step = None
+                for loop in range(n_loops):
+                    if self.config.step_embedding and n_loops > 1:
+                        step_emb = self.step_embeddings(torch.tensor(loop, device=h.device))
+                        h = h + step_emb
 
-                for i, layer in enumerate(self.layers):
-                    vf = v_first_step if self.config.value_residual else None
-                    h, caches[i], v_out = layer(h, freqs_cis_step, mask=None, cache=caches[i], v_first=vf)
-                    if i == 0 and self.config.value_residual:
-                        v_first_step = v_out
-                    if self.config.dense_former:
-                        all_h.append(h)
-                        w = self.dwa_weights[i, :i + 2]
-                        h = sum(w[j] * all_h[j] for j in range(i + 2))
+                    if self.config.feedback and n_loops > 1 and loop > 0:
+                        h = h + self.feedback_norm(h_prev_decode)
+
+                    h_prev_decode = h
+                    h, all_caches[loop], v_first_step = self._run_layers_cached(
+                        h, freqs_cis_step, all_caches[loop], v_first_in=v_first_step
+                    )
 
                 h = self.norm(h)
                 logits = self.output(h)
@@ -585,7 +882,10 @@ class TinyLlama(nn.Module):
         config = checkpoint['config']
         # Handle missing config fields from older checkpoints
         for attr, default in [('dense_former', False), ('value_residual', False),
-                              ('n_registers', 0), ('n_predict', 1)]:
+                              ('n_registers', 0), ('n_predict', 1),
+                              ('n_loops', 1), ('ternary', False),
+                              ('relu_squared', False), ('step_embedding', False),
+                              ('feedback', False)]:
             if not hasattr(config, attr):
                 setattr(config, attr, default)
         model = cls(config)
@@ -627,6 +927,59 @@ def test_model():
 
     model_30m = TinyLlama(config_30m)
     print(f"\n30M v2 model parameters: {model_30m.count_parameters():,}")
+
+    # Test Dream Architecture: Looped + Ternary + ReLU² + all features
+    print("\n--- Dream Architecture Test ---")
+    config_dream = ModelConfig(
+        dim=576, n_layers=4, n_heads=8, n_kv_heads=2,
+        vocab_size=8192, hidden_dim=1536, max_seq_len=512,
+        dropout=0.0, weight_tying=True,
+        # Dream features
+        n_loops=4,
+        ternary=True,
+        relu_squared=True,
+        step_embedding=True,
+        feedback=True,
+        dense_former=True,
+        value_residual=True,
+        n_registers=4,
+    )
+
+    model_dream = TinyLlama(config_dream)
+    params_dream = model_dream.count_parameters()
+    print(f"Dream model unique params: {params_dream:,}")
+    print(f"  Effective depth: {config_dream.n_layers} layers × {config_dream.n_loops} loops = {config_dream.n_layers * config_dream.n_loops}")
+    print(f"  Logical params: ~{params_dream * config_dream.n_loops:,} (shared across loops)")
+
+    # Test forward
+    batch_dream = torch.randint(0, 8192, (2, 64))
+    logits_d, loss_d = model_dream(batch_dream, batch_dream)
+    print(f"  Forward pass OK: logits {logits_d.shape}, loss {loss_d.item():.4f}")
+
+    # Test generation with KV cache + looping
+    gen_d = model_dream.generate(batch_dream[0, :5], max_new_tokens=20, temperature=0.8)
+    print(f"  Generation OK (looped KV cache): {gen_d.shape}")
+
+    # Test without ternary (full precision variant)
+    config_dream_fp = ModelConfig(
+        dim=576, n_layers=4, n_heads=8, n_kv_heads=2,
+        vocab_size=8192, hidden_dim=1536, max_seq_len=512,
+        dropout=0.0, weight_tying=True,
+        n_loops=4, ternary=False, relu_squared=True,
+        step_embedding=True, feedback=True,
+        dense_former=True, value_residual=True, n_registers=4,
+    )
+    model_dream_fp = TinyLlama(config_dream_fp)
+    logits_fp, loss_fp = model_dream_fp(batch_dream, batch_dream)
+    gen_fp = model_dream_fp.generate(batch_dream[0, :5], max_new_tokens=10)
+    print(f"  Full-precision dream: params={model_dream_fp.count_parameters():,}, loss={loss_fp.item():.4f}, gen={gen_fp.shape}")
+
+    # Test backward compatibility
+    print("\n--- Backward Compatibility ---")
+    old_ckpt = model.state_dict()
+    model_reload = TinyLlama(config_10m)
+    model_reload.load_state_dict(old_ckpt)
+    print("  Old checkpoint reload: OK")
 
     print("\nAll tests passed!")
 

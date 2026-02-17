@@ -1,0 +1,94 @@
+# Dream Architecture 30M: Resonant Looped Ternary Transformer
+# 8 unique layers × 4 loops = 32 effective depth
+# ~31M unique params, ~124M logical params
+# Combined data: TinyStories + SmolLM + Synthetic
+
+model:
+  dim: 640
+  n_layers: 8              # 8 unique layers
+  n_heads: 8
+  n_kv_heads: 2
+  vocab_size: 8192
+  hidden_dim: 1728
+  max_seq_len: 512
+  dropout: 0.03
+  weight_tying: true
+  norm_eps: 1e-5
+  rope_theta: 10000.0
+  # Looping
+  n_loops: 4               # 4 loops = 32 effective layers
+  # Ternary quantization
+  ternary: true             # BitNet 1.58b {-1, 0, +1}
+  relu_squared: true        # ReLU² FFN (2 matrices, ternary-friendly)
+  # Loop differentiation
+  step_embedding: true      # Depth embedding per loop iteration
+  feedback: true            # Last layer output → first layer input
+  # Phase 1 enhancements
+  dense_former: true        # DWA weighted averaging
+  value_residual: true      # V residual from layer 0
+  n_registers: 4            # Register tokens (resonance buffers with looping)
+
+tokenizer:
+  type: "custom"
+  vocab_size: 8192
+  model_path: "data/tokenizer_8k.model"
+
+# Pre-training on combined data (10% TinyStories + 45% SmolLM + 45% Synthetic)
+pretrain:
+  dataset: "textfile"
+  data_path: "data/combined_30m"
+  batch_size: 24
+  gradient_accumulation_steps: 6
+  learning_rate: 5.0e-4
+  min_lr: 5.0e-5
+  warmup_iters: 1000
+  max_iters: 20000
+  lr_schedule: "wsd"
+  stable_frac: 0.7
+  decay_frac: 0.2
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 100
+  log_interval: 10
+  save_interval: 2000
+  dtype: "bfloat16"
+  compile: false
+
+finetune:
+  dataset: "chat"
+  data_path: "data/chat_curated"
+  batch_size: 12
+  gradient_accumulation_steps: 6
+  learning_rate: 1.5e-5
+  min_lr: 1.5e-6
+  warmup_iters: 300
+  max_iters: 12000
+  lr_schedule: "cosine"
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 1000
+  dtype: "bfloat16"
+  compile: false
+  mask_targets_only: true
+  # Anti-repetition training techniques
+  label_smoothing: 0.1
+  unlikelihood_alpha: 0.5
+  entropy_reg_beta: 0.01
+
+generation:
+  max_new_tokens: 256
+  temperature: 0.7
+  repetition_penalty: 1.2
+  no_repeat_ngram_size: 3
+  top_p: 0.9
+  top_k: 50
+
+output_dir: "checkpoints/30m_dream"

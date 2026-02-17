@@ -1,0 +1,87 @@
+# TinyLlama 10M Enhanced v2 - Continued Pre-training
+# Phase 2: SmolLM + Synthetic data (no TinyStories)
+# Starting from 10M Enhanced checkpoint (val_loss 1.86 on TinyStories)
+
+model:
+  dim: 256
+  n_layers: 24              # 12 unique with sharing
+  n_heads: 8
+  n_kv_heads: 2
+  vocab_size: 8192
+  hidden_dim: 720
+  max_seq_len: 512
+  dropout: 0.05
+  weight_tying: true
+  norm_eps: 1e-5
+  rope_theta: 10000.0
+  block_sharing: true
+  # Phase 1 enhancements
+  dense_former: true
+  value_residual: true
+  n_registers: 4
+
+tokenizer:
+  type: "custom"
+  vocab_size: 8192
+  model_path: "data/tokenizer_8k.model"
+
+# Continued pre-training on SmolLM + Synthetic (400M tokens)
+pretrain:
+  dataset: "textfile"
+  data_path: "data/combined_10m"
+  batch_size: 32
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-4       # Lower LR for continued training (was 8e-4)
+  min_lr: 2.0e-5
+  warmup_iters: 300            # Short warmup
+  max_iters: 20000             # ~400M tokens with bs=32, accum=4, seq=512
+  lr_schedule: "wsd"
+  stable_frac: 0.7
+  decay_frac: 0.2
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 100
+  log_interval: 10
+  save_interval: 2000
+  dtype: "bfloat16"
+  compile: false
+
+# Fine-tuning on curated data with anti-repetition
+finetune:
+  dataset: "chat"
+  data_path: "data/chat_curated"
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  learning_rate: 2.0e-5
+  min_lr: 2.0e-6
+  warmup_iters: 200
+  max_iters: 10000
+  lr_schedule: "cosine"
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 1000
+  dtype: "bfloat16"
+  compile: false
+  mask_targets_only: true
+  # Anti-repetition training
+  label_smoothing: 0.1
+  unlikelihood_alpha: 0.5
+  entropy_reg_beta: 0.01
+
+generation:
+  max_new_tokens: 256
+  temperature: 0.7
+  repetition_penalty: 1.2
+  no_repeat_ngram_size: 3
+  top_p: 0.9
+  top_k: 50
+
+output_dir: "checkpoints/10m_enhanced_v2"

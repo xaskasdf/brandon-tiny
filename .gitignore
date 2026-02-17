@@ -7,13 +7,29 @@ __pycache__/
 *.egg-info/
 .eggs/
 
-# Data files (large)
+# Data files (large - download with scripts/download_datasets.py)
+data/tinystories/
+data/smollm/
+data/fineweb/
+data/minipile/
 data/wikitext/*.pkl
 data/wikitext/*.bin
+data/wikitext/train.txt
+data/wikitext/validation.txt
+data/wikitext/test.txt
 data/wikipedia/
+data/combined/
+data/combined_10m/
+data/combined_30m/
+data/combined_30m_v2/
+data/combined_110m/
+data/synthetic_only/
+data/synthetic_pretrain/
+data/finetune_10m_optimal/
+data/chat_curated/
 *.parquet
 
-# Checkpoints (large binary files)
+# Checkpoints (large binary files - download from HuggingFace)
 checkpoints/
 
 # IDE
@@ -30,7 +46,34 @@ Thumbs.db
 *.log
 wandb/
 
-# Keep tokenizer and small data
-!data/tokenizer*.model
-!data/tokenizer*.vocab
-!data/chat/*.jsonl
+# Claude Code internal
+.claude/
+
+# Exports
+exports/
+
+# Keep tokenizer models and vocabs
+!data/tokenizer_8k.model
+!data/tokenizer_8k.vocab
+
+# Large data files in chat/ (download from HuggingFace)
+data/chat/train.jsonl
+data/chat/val.jsonl
+data/chat/alpaca.jsonl
+data/chat/dolly.jsonl
+data/chat/synthetic_10k.jsonl
+data/chat/train_curated.jsonl
+data/chat/val_curated.jsonl
+data/test_synthetic.jsonl
+
+# Keep sample data for reference
+!data/chat/sample.jsonl
+
+# Old tokenizer (1k vocab - superseded by 8k)
+data/tokenizer_1k.model
+data/tokenizer_1k.vocab
+
+# Research docs (internal, not for public repo)
+RESEARCH_DEEP_DIVE.md
+RESEARCH_NEXT_STEPS.md
+API_DOCS.md

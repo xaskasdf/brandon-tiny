@@ -11,8 +11,9 @@ from src.model import TinyLlama
 from src.tokenizer import Tokenizer
 
 
-def test_model(checkpoint_path, tokenizer, prompts, label, max_tokens=128, temperature=0.7, top_k=50):
-    """Test a model with multiple prompts."""
+def test_model(checkpoint_path, tokenizer, prompts, label, max_tokens=128, temperature=0.7, top_k=50,
+               repetition_penalty=1.2, no_repeat_ngram_size=3):
+    """Test a model with multiple prompts (with anti-repetition by default)."""
     print(f"\n{'='*60}")
     print(f"  {label}")
     print(f"  Checkpoint: {checkpoint_path}")
@@ -40,7 +41,9 @@ def test_model(checkpoint_path, tokenizer, prompts, label, max_tokens=128, tempe
                 temperature=temperature,
                 top_k=top_k,
                 top_p=0.9,
-                stop_tokens=stop_tokens
+                stop_tokens=stop_tokens,
+                repetition_penalty=repetition_penalty,
+                no_repeat_ngram_size=no_repeat_ngram_size,
             )
 
         # Decode only the generated part (after input)

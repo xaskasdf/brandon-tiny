@@ -1,0 +1,90 @@
+# Dream Architecture: Resonant Looped Ternary Transformer
+# 4 unique layers × 4 loops = 16 effective depth
+# ~15M unique params, ~60M logical params
+# Ternary weights (BitNet 1.58b): transformer layers ~2MB in memory
+# ReLU² FFN, step embeddings, feedback, DWA, value residual, registers
+
+model:
+  dim: 576
+  n_layers: 4              # 4 unique layers
+  n_heads: 8
+  n_kv_heads: 2
+  vocab_size: 8192
+  hidden_dim: 1536
+  max_seq_len: 512
+  dropout: 0.05
+  weight_tying: true
+  norm_eps: 1e-5
+  rope_theta: 10000.0
+  # Looping
+  n_loops: 4               # 4 loops = 16 effective layers
+  # Ternary quantization
+  ternary: true             # BitNet 1.58b {-1, 0, +1}
+  relu_squared: true        # ReLU² FFN (2 matrices, ternary-friendly)
+  # Loop differentiation
+  step_embedding: true      # Depth embedding per loop iteration
+  feedback: true            # Last layer output → first layer input
+  # Phase 1 enhancements
+  dense_former: true        # DWA weighted averaging
+  value_residual: true      # V residual from layer 0
+  n_registers: 4            # Register tokens (resonance buffers with looping)
+
+tokenizer:
+  type: "custom"
+  vocab_size: 8192
+  model_path: "data/tokenizer_8k.model"
+
+# Pre-training on combined data (TinyStories + SmolLM + Synthetic)
+pretrain:
+  dataset: "textfile"
+  data_path: "data/combined"
+  batch_size: 32
+  gradient_accumulation_steps: 4
+  learning_rate: 6.0e-4       # Slightly lower for ternary stability
+  min_lr: 6.0e-5
+  warmup_iters: 1000          # Longer warmup for ternary STE
+  max_iters: 15000
+  lr_schedule: "wsd"
+  stable_frac: 0.7
+  decay_frac: 0.2
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 100
+  log_interval: 10
+  save_interval: 2000
+  dtype: "bfloat16"
+  compile: false
+
+# Fine-tuning
+finetune:
+  dataset: "chat"
+  data_path: "data/chat"
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  learning_rate: 1.5e-5
+  min_lr: 1.5e-6
+  warmup_iters: 200
+  max_iters: 10000
+  lr_schedule: "cosine"
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 1000
+  dtype: "bfloat16"
+  compile: false
+  mask_targets_only: true
+
+generation:
+  max_new_tokens: 256
+  temperature: 0.7
+  top_p: 0.9
+  top_k: 50
+
+output_dir: "checkpoints/dream"

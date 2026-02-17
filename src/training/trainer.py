@@ -57,6 +57,11 @@ class TrainingConfig:
     mtp_curriculum: bool = False  # Enable gradual MTP ramp-up
     mtp_warmup_frac: float = 0.4  # Fraction of training to ramp from k=1 to k=n_predict
 
+    # Anti-repetition training
+    label_smoothing: float = 0.0  # Label smoothing epsilon (0.1 recommended)
+    unlikelihood_alpha: float = 0.0  # Unlikelihood training weight (0.5 recommended)
+    entropy_reg_beta: float = 0.0  # Entropy regularization weight (0.01 recommended)
+
     # Misc
     compile: bool = False
     output_dir: str = "checkpoints"
@@ -318,7 +323,13 @@ class Trainer:
 
         # Forward pass with mixed precision
         with autocast('cuda', dtype=self.dtype, enabled=self.use_amp):
-            _, loss = self.model(input_ids, labels, target_mask, n_predict_override=mtp_k)
+            _, loss = self.model(
+                input_ids, labels, target_mask,
+                n_predict_override=mtp_k,
+                label_smoothing=self.config.label_smoothing,
+                unlikelihood_alpha=self.config.unlikelihood_alpha,
+                entropy_reg_beta=self.config.entropy_reg_beta,
+            )
             loss = loss / self.config.gradient_accumulation_steps
 
         # Backward pass with gradient scaling

@@ -223,7 +223,9 @@ def main():
         temperature=gen_config.get('temperature', 0.8),
         top_p=gen_config.get('top_p', 0.9),
         top_k=gen_config.get('top_k', 40),
-        stop_tokens=tokenizer.get_stop_tokens()
+        stop_tokens=tokenizer.get_stop_tokens(),
+        repetition_penalty=gen_config.get('repetition_penalty', 1.0),
+        no_repeat_ngram_size=gen_config.get('no_repeat_ngram_size', 0),
     )
 
     generated_text = tokenizer.decode(output[0].tolist())

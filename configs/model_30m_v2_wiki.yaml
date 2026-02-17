@@ -1,0 +1,90 @@
+# TinyLlama 30M v2 - Dense + Wikipedia + Enhanced
+# Deep-Narrow with DenseFormer + Value Residual + Registers
+# Data: 40% Wikipedia + 30% SmolLM + 30% Synthetic (600M tokens)
+# Proven dense architecture that finetunes well
+
+model:
+  dim: 384
+  n_layers: 28              # 14 unique with sharing
+  n_heads: 8
+  n_kv_heads: 2             # Aggressive GQA
+  vocab_size: 8192
+  hidden_dim: 1344           # ~3.5x dim for SwiGLU
+  max_seq_len: 512
+  dropout: 0.0
+  weight_tying: true
+  norm_eps: 1e-5
+  rope_theta: 10000.0
+  block_sharing: true        # MobileLLM block sharing
+  # Phase 1 enhancements (proven on 10M Enhanced)
+  dense_former: true         # DWA weighted averaging
+  value_residual: true       # V residual from layer 0
+  n_registers: 4             # Register tokens
+
+tokenizer:
+  type: "custom"
+  vocab_size: 8192
+  model_path: "data/tokenizer_8k.model"
+
+# Pre-training: 600M tokens (Chinchilla 20x for 30M)
+# Effective batch: 24 × 4 × 512 = 49,152 tokens/step
+# 20,000 steps × 49,152 ≈ 983M tokens (over Chinchilla, more data = better)
+pretrain:
+  dataset: "textfile"
+  data_path: "data/combined_30m_v2"
+  batch_size: 24
+  gradient_accumulation_steps: 4
+  learning_rate: 5.0e-4
+  min_lr: 5.0e-5
+  warmup_iters: 1000
+  max_iters: 12000
+  lr_schedule: "wsd"
+  stable_frac: 0.7
+  decay_frac: 0.2
+  weight_decay: 0.1
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 100
+  log_interval: 10
+  save_interval: 2000
+  dtype: "bfloat16"
+  compile: false
+
+# Fine-tuning on curated data with anti-repetition
+finetune:
+  dataset: "chat"
+  data_path: "data/chat_curated"
+  batch_size: 12
+  gradient_accumulation_steps: 4
+  learning_rate: 1.0e-5
+  min_lr: 1.0e-6
+  warmup_iters: 300
+  max_iters: 12000
+  lr_schedule: "cosine"
+  weight_decay: 0.01
+  beta1: 0.9
+  beta2: 0.95
+  grad_clip: 1.0
+  eval_interval: 500
+  eval_iters: 50
+  log_interval: 10
+  save_interval: 1000
+  dtype: "bfloat16"
+  compile: false
+  mask_targets_only: true
+  # Anti-repetition
+  label_smoothing: 0.1
+  unlikelihood_alpha: 0.5
+  entropy_reg_beta: 0.01
+
+generation:
+  max_new_tokens: 256
+  temperature: 0.7
+  repetition_penalty: 1.2
+  no_repeat_ngram_size: 3
+  top_p: 0.9
+  top_k: 50
+
+output_dir: "checkpoints/30m_v2_wiki"
