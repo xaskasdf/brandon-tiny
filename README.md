@@ -5,7 +5,7 @@ Ultra-small instruction-following language models (10M-110M parameters) that run
 **Website:** [naranjositos.tech](https://naranjositos.tech/)
 **Model on HuggingFace:** [brandon-tiny-10m-instruct](https://huggingface.co/xaskasdf/brandon-tiny-10m-instruct)
 **Datasets on HuggingFace:** [brandon-tiny-pretrain](https://huggingface.co/datasets/xaskasdf/brandon-tiny-pretrain) | [brandon-tiny-instruct](https://huggingface.co/datasets/xaskasdf/brandon-tiny-instruct)
-**Technical Report:** [GitHub Pages](https://xaskasdf.github.io/brandon-tiny/paper.html)
+**Technical Report:** [GitHub Pages](https://xaskasdf.github.io/brandon-tiny/paper.html) | [PDF](https://factory.naranjositos.tech/downloads/brandon_tiny_10m.pdf)
 
 ## The Story
 
