@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Brandon-Tiny — Ultra-Small Instruction-Following Language Models</title>
+  <meta name="description" content="10.7M parameter instruction-following LLM that outperforms 50M models. Trained in 7 hours on a single RTX 3090.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="container">
+      <h1>Brandon-Tiny</h1>
+      <p class="tagline">10.7M params, runs on a PS2</p>
+      <div class="badges">
+        <a class="badge badge--hf" href="https://huggingface.co/xaskasdf/brandon-tiny-10m-instruct">🤗 Model</a>
+        <a class="badge badge--hf" href="https://huggingface.co/datasets/xaskasdf/brandon-tiny-pretrain">📦 Pretrain Data</a>
+        <a class="badge badge--hf" href="https://huggingface.co/datasets/xaskasdf/brandon-tiny-instruct">📦 Instruct Data</a>
+        <a class="badge badge--gh" href="https://github.com/xaskasdf/brandon-tiny">GitHub</a>
+        <a class="badge badge--web" href="https://naranjositos.tech/">naranjositos.tech</a>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- Key stats -->
+    <section>
+      <div class="stat-row">
+        <div class="stat"><span class="value">10.7M</span><span class="label">Parameters</span></div>
+        <div class="stat"><span class="value">73.3%</span><span class="label">BLiMP Grammar</span></div>
+        <div class="stat"><span class="value">32.4%</span><span class="label">HellaSwag</span></div>
+        <div class="stat"><span class="value">~7 hrs</span><span class="label">Training Time</span></div>
+      </div>
+      <p>Brandon-Tiny 10M is an ultra-small instruction-following language model that outperforms models 5x its size on standard benchmarks. Built on a deep-narrow Llama 2 architecture with DenseFormer, Value Residual, and Register Tokens, trained entirely on a single RTX 3090.</p>
+    </section>
+
+    <!-- Benchmarks -->
+    <section>
+      <h2>Benchmark Results</h2>
+      <table>
+        <thead>
+          <tr><th>Benchmark</th><th>Score</th><th>Random</th><th>Delta</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>BLiMP (Grammar)</td><td><strong>73.3%</strong></td><td>50.0%</td><td>+23.3</td></tr>
+          <tr><td>HellaSwag (Commonsense)</td><td><strong>32.4%</strong></td><td>25.0%</td><td>+7.4</td></tr>
+          <tr><td>ARC-Easy (Science)</td><td><strong>30.6%</strong></td><td>25.0%</td><td>+5.6</td></tr>
+          <tr><td>PIQA (Physical Intuition)</td><td><strong>54.7%</strong></td><td>50.0%</td><td>+4.7</td></tr>
+          <tr><td>LAMBADA (Last Word)</td><td><strong>8.8%</strong></td><td>0.0%</td><td>+8.8</td></tr>
+          <tr><td>Wikitext-2 PPL</td><td><strong>224.2</strong></td><td>—</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p>For comparison: the <a href="https://arxiv.org/abs/2405.14159">Super Tiny Language Models</a> paper's 50M model (5x our size) scored 25.6% on HellaSwag and 21% on ARC-Easy. Our 10.7M model beats both.</p>
+    </section>
+
+    <!-- 3-Phase Pipeline -->
+    <section>
+      <h2>3-Phase Training Pipeline</h2>
+      <p>The key innovation: each phase compensates for the limitations of the previous one.</p>
+      <div class="pipeline">
+        <div class="pipeline-phase">
+          <span class="phase-num">Phase 1</span>
+          <span class="phase-title">Foundation Pretrain</span>
+          <span class="phase-detail">15K steps, WSD schedule<br>Wiki + SmolLM + Synthetic</span>
+        </div>
+        <div class="pipeline-phase">
+          <span class="phase-num">Phase 2</span>
+          <span class="phase-title">Knowledge Distillation</span>
+          <span class="phase-detail">7.5K steps, reverse KLD<br>30M teacher → 10M student</span>
+        </div>
+        <div class="pipeline-phase">
+          <span class="phase-num">Phase 3</span>
+          <span class="phase-title">Instruction Finetune</span>
+          <span class="phase-detail">12K steps, cosine LR<br>75K examples + anti-repetition</span>
+        </div>
+      </div>
+      <p>Result: 10M Optimal (val_loss 2.40) outperforms all 30M models (best: 2.61). <strong>Training methodology > parameter count.</strong></p>
+    </section>
+
+    <!-- Architecture -->
+    <section>
+      <h2>Architecture</h2>
+      <table>
+        <tbody>
+          <tr><td>Type</td><td>Llama 2 decoder-only, deep-narrow (MobileLLM)</td></tr>
+          <tr><td>Parameters</td><td>10,706,776</td></tr>
+          <tr><td>Dimensions</td><td>dim=256, hidden=720</td></tr>
+          <tr><td>Layers</td><td>24 (12 unique, block sharing)</td></tr>
+          <tr><td>Attention</td><td>8 heads, 2 KV heads (GQA 4:1)</td></tr>
+          <tr><td>Enhancements</td><td>DenseFormer + Value Residual + Register Tokens</td></tr>
+          <tr><td>Tokenizer</td><td>8,192 BPE (SentencePiece), ChatML format</td></tr>
+          <tr><td>Max Sequence</td><td>512 tokens</td></tr>
+          <tr><td>Model Size</td><td>42.8 MB (fp32) / 21.4 MB (bf16)</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Quick Start -->
+    <section>
+      <h2>Quick Start</h2>
+<pre><code># Install
+pip install torch sentencepiece pyyaml numpy datasets
+
+# Generate text
+python scripts/chat.py --checkpoint checkpoints/10m_optimal/phase3_finetune/best.pt
+
+# Run the full 3-phase training pipeline
+python scripts/train_10m_optimal.py
+
+# Run benchmarks
+python scripts/benchmark_serious.py</code></pre>
+    </section>
+
+    <!-- Model Variants -->
+    <section>
+      <h2>Model Variants</h2>
+      <p>We trained 8 variants to understand what works at this scale:</p>
+      <table>
+        <thead>
+          <tr><th>Model</th><th>Params</th><th>Finetune Loss</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>10M Optimal</strong></td><td>10.7M</td><td><strong>2.40</strong></td><td>3-phase pipeline, best overall</td></tr>
+          <tr><td>10M Enhanced v2</td><td>10.7M</td><td>2.92</td><td>DenseFormer+VR+Registers</td></tr>
+          <tr><td>10M Dream</td><td>10.7M</td><td>2.98</td><td>Ternary weights (failed)</td></tr>
+          <tr><td>10M Synthetic-only</td><td>10.7M</td><td>3.62</td><td>Synthetic data = poor transfer</td></tr>
+          <tr><td>30M v2 Original</td><td>30.0M</td><td>2.61</td><td>Best 30M, but 10M Optimal beats it</td></tr>
+          <tr><td>30M v2 Wiki</td><td>30.0M</td><td>2.80</td><td>Wikipedia pretrain</td></tr>
+          <tr><td>30M Dream</td><td>31.1M</td><td>4.22</td><td>Ternary, worst overall</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Technical Report -->
+    <section>
+      <h2>Technical Report</h2>
+      <p>Read the full technical report with architecture details, ablation studies, and analysis:</p>
+      <p><a href="paper.html">Brandon-Tiny 10M: A 3-Phase Training Pipeline for Ultra-Small Instruction-Following Language Models →</a></p>
+    </section>
+
+    <!-- Citation -->
+    <section>
+      <h2>Citation</h2>
+      <div class="citation">
+<pre><code>@misc{brandon-tiny-2026,
+  title={Brandon-Tiny 10M: A 3-Phase Training Pipeline for
+         Ultra-Small Instruction-Following Language Models},
+  author={Samuel Cortes},
+  year={2026},
+  url={https://xaskasdf.github.io/brandon-tiny/}
+}</code></pre>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="container">
+      <p>Brandon-Tiny · Apache 2.0 · <a href="https://github.com/xaskasdf/brandon-tiny">GitHub</a> · <a href="https://huggingface.co/xaskasdf/brandon-tiny-10m-instruct">HuggingFace</a></p>
+    </div>
+  </footer>
+
+</body>
+</html>
