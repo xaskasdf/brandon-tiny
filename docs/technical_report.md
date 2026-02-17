@@ -2,7 +2,7 @@
 
 **Authors:** Samuel Cortes
 **Date:** February 2026
-**Code:** https://github.com/[your-repo]/brandon-tiny
+**Code:** https://github.com/xaskasdf/brandon-tiny
 
 ## Abstract
 

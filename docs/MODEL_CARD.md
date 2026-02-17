@@ -172,7 +172,7 @@ Note: The 10M Optimal achieves comparable performance to 30M models with 3x fewe
 ### Installation
 
 ```bash
-git clone https://github.com/[your-repo]/brandon-tiny
+git clone https://github.com/xaskasdf/brandon-tiny
 cd brandon-tiny
 pip install torch sentencepiece pyyaml numpy
 ```
@@ -326,7 +326,7 @@ For the full experimental report, see our [technical report](docs/technical_repo
 ## Links
 
 - **Website:** [naranjositos.tech](https://naranjositos.tech/)
-- **Code:** [github.com/naranjositos/brandon-tiny](https://github.com/naranjositos/brandon-tiny)
+- **Code:** [github.com/xaskasdf/brandon-tiny](https://github.com/xaskasdf/brandon-tiny)
 - **Technical Report:** [docs/technical_report.md](docs/technical_report.md)
 
 ## Citation
