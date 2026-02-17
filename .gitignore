@@ -48,6 +48,16 @@ wandb/
 
 # Claude Code internal
 .claude/
+.playwright-mcp/
+
+# LaTeX build artifacts
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.out
+paper/*.fls
+paper/*.fdb_latexmk
+paper/*.synctex.gz
 
 # Exports
 exports/
