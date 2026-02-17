@@ -9,287 +9,327 @@
 </head>
 <body>
 
-  <!-- Navigation -->
-  <nav class="paper-nav">
-    <div class="container">
-      <a href="index.html">← Home</a>
-      <a href="#abstract">Abstract</a>
-      <a href="#introduction">1. Introduction</a>
-      <a href="#architecture">2. Architecture</a>
-      <a href="#training">3. Training</a>
-      <a href="#experiments">4. Experiments</a>
-      <a href="#qualitative">5. Qualitative</a>
-      <a href="#infrastructure">6. Infrastructure</a>
-      <a href="#related">7. Related Work</a>
-      <a href="#limitations">8. Limitations</a>
-      <a href="#conclusion">9. Conclusion</a>
-      <a href="#references">References</a>
-    </div>
-  </nav>
+  <div class="paper-layout">
 
-  <!-- Header -->
-  <header class="paper-header">
-    <div class="container">
-      <h1>Brandon-Tiny 10M: A 3-Phase Training Pipeline for Ultra-Small Instruction-Following Language Models</h1>
-      <p class="paper-meta">
-        <strong>Samuel Cortes</strong> · February 2026<br>
-        Code: <a href="https://github.com/xaskasdf/brandon-tiny">github.com/xaskasdf/brandon-tiny</a>
-        · Model: <a href="https://huggingface.co/xaskasdf/brandon-tiny-10m-instruct">HuggingFace</a>
-      </p>
-    </div>
-  </header>
+    <!-- Sidebar Navigation -->
+    <nav class="paper-nav" id="sidebar">
+      <div class="nav-title">Contents</div>
+      <a class="nav-home" href="index.html">← Home</a>
+      <a href="#abstract" data-section="abstract">Abstract</a>
+      <a href="#introduction" data-section="introduction">1. Introduction</a>
+      <a href="#architecture" data-section="architecture">2. Architecture</a>
+      <a href="#training" data-section="training">3. Training Pipeline</a>
+      <a href="#experiments" data-section="experiments">4. Experiments</a>
+      <a href="#qualitative" data-section="qualitative">5. Qualitative</a>
+      <a href="#infrastructure" data-section="infrastructure">6. Infrastructure</a>
+      <a href="#related" data-section="related">7. Related Work</a>
+      <a href="#limitations" data-section="limitations">8. Limitations</a>
+      <a href="#conclusion" data-section="conclusion">9. Conclusion</a>
+      <a href="#reproducibility" data-section="reproducibility">10. Reproducibility</a>
+      <a href="#references" data-section="references">References</a>
+    </nav>
 
-  <div class="paper-content container">
+    <!-- Main content -->
+    <div class="paper-main">
 
-    <!-- Abstract -->
-    <section id="abstract">
-      <h2>Abstract</h2>
-      <p>We present Brandon-Tiny 10M, a 10.7M parameter instruction-following language model that achieves competitive performance with models 3x its size through a novel 3-phase training pipeline combining foundation pre-training, knowledge distillation, and instruction fine-tuning. Built on a deep-narrow Llama 2 architecture enhanced with DenseFormer weighted averaging, Value Residual connections, and register tokens, our model demonstrates that careful training orchestration can compensate for limited parameter budgets. Trained entirely on a single RTX 3090 GPU, Brandon-Tiny 10M achieves a fine-tuning validation loss of 2.40 (surpassing our own 30M parameter models at 2.61), generates coherent text, follows instructions at 80% accuracy, and exhibits zero repetition loops across 20 free-generation tests. We describe our complete experimental journey across 8 model variants and analyze the key factors contributing to performance at this extreme scale.</p>
-    </section>
+      <!-- Header -->
+      <header class="paper-header">
+        <h1>Brandon-Tiny 10M: A 3-Phase Training Pipeline for Ultra-Small Instruction-Following Language Models</h1>
+        <p class="paper-meta">
+          <strong>Samuel Cortes</strong> · February 2026<br>
+          Code: <a href="https://github.com/xaskasdf/brandon-tiny">github.com/xaskasdf/brandon-tiny</a>
+          · Model: <a href="https://huggingface.co/xaskasdf/brandon-tiny-10m-instruct">HuggingFace</a>
+        </p>
+      </header>
 
-    <!-- 1. Introduction -->
-    <section id="introduction">
-      <h2>1. Introduction</h2>
-      <p>The dominant trend in language modeling has been scaling up: more parameters, more data, more compute. Yet practical deployment often demands the opposite — models that run on edge devices, embedded systems, or resource-constrained environments. While research on efficient LLMs has flourished (MobileLLM, SmolLM2, Phi), most work targets the 125M–7B range. Models under 50M parameters remain largely unexplored for instruction-following tasks.</p>
-      <p>Our motivation was concrete: we wanted a language model capable of running natively on a PlayStation 2's Emotion Engine, which has only 32 MB of VRAM. Inspired by Karpathy's TinyStories, we searched for existing models small enough for this constraint and found none with instruction-following capabilities. The project's name — Brandon Tiny — originated from a Cloudflare tunnel URL (<code>sugar-alaska-brandon-tiny.trycloudflare.com</code>) generated while serving a custom agentic chat, which sounded so much like a language model name that it stuck.</p>
-      <p>We address this gap by systematically exploring what is achievable at 10.7M parameters. Our key contributions:</p>
-      <ol>
-        <li><strong>A 3-phase training pipeline</strong> (Pretrain → Distill → Finetune) specifically designed for ultra-small models, where each phase compensates for limitations of the previous one.</li>
-        <li><strong>Extensive ablation across 8 model variants</strong>, revealing that training methodology matters more than raw parameter count at this scale.</li>
-        <li><strong>Anti-repetition training techniques</strong> combining label smoothing, unlikelihood training, and entropy regularization that completely eliminate generation loops.</li>
-        <li><strong>Practical guidelines</strong> for training sub-50M parameter instruction models on consumer hardware.</li>
-      </ol>
-    </section>
+      <div class="paper-content">
 
-    <!-- 2. Architecture -->
-    <section id="architecture">
-      <h2>2. Architecture</h2>
+        <!-- Abstract -->
+        <section id="abstract">
+          <h2>Abstract</h2>
+          <p>We present Brandon-Tiny 10M, a 10.7M parameter instruction-following language model that achieves competitive performance with models 3x its size through a novel 3-phase training pipeline combining foundation pre-training, knowledge distillation, and instruction fine-tuning. Built on a deep-narrow Llama 2 architecture enhanced with DenseFormer weighted averaging, Value Residual connections, and register tokens, our model demonstrates that careful training orchestration can compensate for limited parameter budgets. Trained entirely on a single RTX 3090 GPU, Brandon-Tiny 10M achieves a fine-tuning validation loss of 2.40 (surpassing our own 30M parameter models at 2.61), generates coherent text, follows instructions at 80% accuracy, and exhibits zero repetition loops across 20 free-generation tests. We describe our complete experimental journey across 8 model variants and analyze the key factors contributing to performance at this extreme scale.</p>
+        </section>
 
-      <h3>2.1 Base Architecture</h3>
-      <p>Brandon-Tiny 10M follows the Llama 2 architecture with modifications from MobileLLM (deep-narrow design with block sharing):</p>
-      <table>
-        <thead><tr><th>Component</th><th>Specification</th></tr></thead>
-        <tbody>
-          <tr><td>Dimensions</td><td>dim=256, hidden=720</td></tr>
-          <tr><td>Layers</td><td>24 (12 unique, block sharing)</td></tr>
-          <tr><td>Attention</td><td>8 heads, 2 KV heads (GQA 4:1)</td></tr>
-          <tr><td>Vocabulary</td><td>8,192 (SentencePiece BPE)</td></tr>
-          <tr><td>Max sequence</td><td>512 tokens</td></tr>
-          <tr><td>Activation</td><td>SwiGLU</td></tr>
-          <tr><td>Normalization</td><td>RMSNorm</td></tr>
-          <tr><td>Position encoding</td><td>RoPE (theta=10000)</td></tr>
-          <tr><td>Total parameters</td><td>10,706,776</td></tr>
-        </tbody>
-      </table>
+        <!-- 1. Introduction -->
+        <section id="introduction">
+          <h2>1. Introduction</h2>
+          <p>The dominant trend in language modeling has been scaling up: more parameters, more data, more compute. Yet practical deployment often demands the opposite — models that run on edge devices, embedded systems, or resource-constrained environments. While research on efficient LLMs has flourished (MobileLLM, SmolLM2, Phi), most work targets the 125M–7B range. Models under 50M parameters remain largely unexplored for instruction-following tasks.</p>
+          <p>Our motivation was concrete: we wanted a language model capable of running natively on a PlayStation 2's Emotion Engine, which has only 32 MB of VRAM. Inspired by Karpathy's TinyStories, we searched for existing models small enough for this constraint and found none with instruction-following capabilities. The project's name — Brandon Tiny — originated from a Cloudflare tunnel URL (<code>sugar-alaska-brandon-tiny.trycloudflare.com</code>) generated while serving a custom agentic chat, which sounded so much like a language model name that it stuck.</p>
+          <p>We address this gap by systematically exploring what is achievable at 10.7M parameters. Our key contributions:</p>
+          <ol>
+            <li><strong>A 3-phase training pipeline</strong> (Pretrain → Distill → Finetune) specifically designed for ultra-small models, where each phase compensates for limitations of the previous one.</li>
+            <li><strong>Extensive ablation across 8 model variants</strong>, revealing that training methodology matters more than raw parameter count at this scale.</li>
+            <li><strong>Anti-repetition training techniques</strong> combining label smoothing, unlikelihood training, and entropy regularization that completely eliminate generation loops.</li>
+            <li><strong>Practical guidelines</strong> for training sub-50M parameter instruction models on consumer hardware.</li>
+          </ol>
+        </section>
 
-      <h3>2.2 Architectural Enhancements</h3>
-      <p>Three enhancements from recent literature, validated on smaller experiments before applying to the final model:</p>
-      <p><strong>DenseFormer (Pagliardini et al., 2024):</strong> Depth-Weighted Averaging (DWA) adds learnable weighted connections from all previous layer outputs to each subsequent layer, improving gradient flow in deep-narrow architectures.</p>
-      <p><strong>Value Residual Learning (Wang et al., 2024):</strong> The value projection from layer 0 is added to all subsequent layers' value computations, preserving early representations that tend to be lost in deep networks.</p>
-      <p><strong>Register Tokens (Darcet et al., 2024):</strong> 4 learnable tokens prepended to the input sequence act as "information sinks" for attention, reducing attention entropy collapse observed in small models.</p>
+        <!-- 2. Architecture -->
+        <section id="architecture">
+          <h2>2. Architecture</h2>
 
-      <h3>2.3 MobileLLM Block Sharing</h3>
-      <p>Adjacent pairs of layers share weights, effectively giving 12 unique parameter blocks applied twice. This halves the parameter count while maintaining depth, following the finding from MobileLLM that depth matters more than width for small models.</p>
+          <h3>2.1 Base Architecture</h3>
+          <p>Brandon-Tiny 10M follows the Llama 2 architecture with modifications from MobileLLM (deep-narrow design with block sharing):</p>
+          <table>
+            <thead><tr><th>Component</th><th>Specification</th></tr></thead>
+            <tbody>
+              <tr><td>Dimensions</td><td>dim=256, hidden=720</td></tr>
+              <tr><td>Layers</td><td>24 (12 unique, block sharing)</td></tr>
+              <tr><td>Attention</td><td>8 heads, 2 KV heads (GQA 4:1)</td></tr>
+              <tr><td>Vocabulary</td><td>8,192 (SentencePiece BPE)</td></tr>
+              <tr><td>Max sequence</td><td>512 tokens</td></tr>
+              <tr><td>Activation</td><td>SwiGLU</td></tr>
+              <tr><td>Normalization</td><td>RMSNorm</td></tr>
+              <tr><td>Position encoding</td><td>RoPE (theta=10000)</td></tr>
+              <tr><td>Total parameters</td><td>10,706,776</td></tr>
+            </tbody>
+          </table>
 
-      <h3>2.4 Design Rationale</h3>
-      <p>The deep-narrow + block sharing design was chosen over standard proportional scaling based on our ablation studies:</p>
-      <table>
-        <thead><tr><th>Model Variant</th><th>Architecture</th><th>Pretrain Loss</th><th>Finetune Loss</th></tr></thead>
-        <tbody>
-          <tr><td>10M v2 baseline</td><td>dim=192, 16 layers, sharing</td><td>1.92</td><td>3.92</td></tr>
-          <tr><td>10M Enhanced v2</td><td>dim=256, 24 layers, sharing + DWA + VR + Reg</td><td>3.73</td><td>2.92</td></tr>
-        </tbody>
-      </table>
-      <p>The enhanced architecture trades pretrain perplexity for dramatically better downstream performance, suggesting that the enhancements improve the model's ability to compress knowledge into limited parameters.</p>
-    </section>
+          <h3>2.2 Architectural Enhancements</h3>
+          <p>Three enhancements from recent literature, validated on smaller experiments before applying to the final model:</p>
+          <p><strong>DenseFormer (Pagliardini et al., 2024):</strong> Depth-Weighted Averaging (DWA) adds learnable weighted connections from all previous layer outputs to each subsequent layer, improving gradient flow in deep-narrow architectures.</p>
+          <p><strong>Value Residual Learning (Wang et al., 2024):</strong> The value projection from layer 0 is added to all subsequent layers' value computations, preserving early representations that tend to be lost in deep networks.</p>
+          <p><strong>Register Tokens (Darcet et al., 2024):</strong> 4 learnable tokens prepended to the input sequence act as "information sinks" for attention, reducing attention entropy collapse observed in small models.</p>
 
-    <!-- 3. Training Pipeline -->
-    <section id="training">
-      <h2>3. Training Pipeline</h2>
+          <h3>2.3 MobileLLM Block Sharing</h3>
+          <p>Adjacent pairs of layers share weights, effectively giving 12 unique parameter blocks applied twice. This halves the parameter count while maintaining depth, following the finding from MobileLLM that depth matters more than width for small models.</p>
 
-      <h3>3.1 Overview</h3>
-      <p>Our 3-phase pipeline addresses the core challenge of ultra-small models: they lack the capacity to learn everything from scratch. Each phase adds a different type of knowledge:</p>
+          <h3>2.4 Design Rationale</h3>
+          <p>The deep-narrow + block sharing design was chosen over standard proportional scaling based on our ablation studies:</p>
+          <table>
+            <thead><tr><th>Model Variant</th><th>Architecture</th><th>Pretrain Loss</th><th>Finetune Loss</th></tr></thead>
+            <tbody>
+              <tr><td>10M v2 baseline</td><td>dim=192, 16 layers, sharing</td><td>1.92</td><td>3.92</td></tr>
+              <tr><td>10M Enhanced v2</td><td>dim=256, 24 layers, sharing + DWA + VR + Reg</td><td>3.73</td><td>2.92</td></tr>
+            </tbody>
+          </table>
+          <p>The enhanced architecture trades pretrain perplexity for dramatically better downstream performance, suggesting that the enhancements improve the model's ability to compress knowledge into limited parameters.</p>
+        </section>
+
+        <!-- 3. Training Pipeline -->
+        <section id="training">
+          <h2>3. Training Pipeline</h2>
+
+          <h3>3.1 Overview</h3>
+          <p>Our 3-phase pipeline addresses the core challenge of ultra-small models: they lack the capacity to learn everything from scratch. Each phase adds a different type of knowledge:</p>
 <pre><code>Phase 1: Foundation Pretrain    → Language modeling basics
 Phase 2: Knowledge Distillation → Compressed knowledge from larger teacher
 Phase 3: Instruction Finetune   → Task-specific behavior + anti-repetition</code></pre>
 
-      <h3>3.2 Phase 1: Foundation Pre-training</h3>
-      <p><strong>Data:</strong> Mixed corpus of 600M tokens — 40% <a href="https://huggingface.co/datasets/wikimedia/wikipedia">Wikipedia English</a>, 30% <a href="https://huggingface.co/datasets/HuggingFaceTB/smollm-corpus">SmolLM Corpus</a>, 30% Synthetic data (LLM-generated diverse topics).</p>
-      <p><strong>Configuration:</strong> Learning rate 8e-4 with WSD schedule (MiniCPM), 15,000 steps, effective batch 65,536 tokens/step. Warmup 500 steps, Stable 70%, Decay 20%. Weight decay 0.1, gradient clipping 1.0, bfloat16.</p>
-      <p><strong>Result:</strong> val_loss = 4.39, perplexity = 80.8. The WSD schedule's decay phase consistently delivered the largest quality improvements (often 0.3–0.5 loss reduction).</p>
+          <h3>3.2 Phase 1: Foundation Pre-training</h3>
+          <p><strong>Data:</strong> Mixed corpus of 600M tokens — 40% <a href="https://huggingface.co/datasets/wikimedia/wikipedia">Wikipedia English</a>, 30% <a href="https://huggingface.co/datasets/HuggingFaceTB/smollm-corpus">SmolLM Corpus</a>, 30% Synthetic data (LLM-generated diverse topics).</p>
+          <p><strong>Configuration:</strong> Learning rate 8e-4 with WSD schedule (MiniCPM), 15,000 steps, effective batch 65,536 tokens/step. Warmup 500 steps, Stable 70%, Decay 20%. Weight decay 0.1, gradient clipping 1.0, bfloat16.</p>
+          <p><strong>Result:</strong> val_loss = 4.39, perplexity = 80.8. The WSD schedule's decay phase consistently delivered the largest quality improvements (often 0.3–0.5 loss reduction).</p>
 
-      <h3>3.3 Phase 2: Knowledge Distillation</h3>
-      <p>Distillation from a pre-trained 30M parameter teacher (Brandon-Tiny 30M v2, val_loss 3.26) into our 10M student — a 2.8x compression ratio.</p>
-      <p><strong>Configuration:</strong> Reverse KL Divergence (mode-seeking), temperature 2.0, alpha 0.5, learning rate 4e-4 with WSD, 7,500 steps.</p>
-      <p><strong>Why Reverse KLD?</strong> Following MiniPLM (ICLR 2025), reverse KLD is mode-seeking rather than mean-seeking, which better suits small students that cannot cover the full distribution of the teacher. The student learns to focus on the teacher's most confident predictions.</p>
-      <p><strong>Result:</strong> val_loss = 4.84 (measured against hard targets; soft-target loss was much lower).</p>
+          <h3>3.3 Phase 2: Knowledge Distillation</h3>
+          <p>Distillation from a pre-trained 30M parameter teacher (Brandon-Tiny 30M v2, val_loss 3.26) into our 10M student — a 2.8x compression ratio.</p>
+          <p><strong>Configuration:</strong> Reverse KL Divergence (mode-seeking), temperature 2.0, alpha 0.5, learning rate 4e-4 with WSD, 7,500 steps.</p>
+          <p><strong>Why Reverse KLD?</strong> Following MiniPLM (ICLR 2025), reverse KLD is mode-seeking rather than mean-seeking, which better suits small students that cannot cover the full distribution of the teacher. The student learns to focus on the teacher's most confident predictions.</p>
+          <p><strong>Result:</strong> val_loss = 4.84 (measured against hard targets; soft-target loss was much lower).</p>
 
-      <h3>3.4 Phase 3: Instruction Fine-tuning</h3>
-      <p><strong>Data:</strong> Merged instruction dataset (75,502 examples) — 57K curated chat instructions, 19,944 reasoning/CoT examples, ~200 pretrain replay examples (to prevent catastrophic forgetting).</p>
-      <p><strong>Chat Format:</strong> ChatML with <code>&lt;|im_start|&gt;</code> / <code>&lt;|im_end|&gt;</code> tokens, loss computed only on assistant responses.</p>
-      <p><strong>Anti-repetition Training:</strong> Label smoothing (0.1), Unlikelihood training (alpha=0.5), Entropy regularization (beta=0.01). This triple-technique approach eliminates severe repetition observed in early versions.</p>
-      <p><strong>Configuration:</strong> Learning rate 2e-5, cosine schedule, 12,000 steps, weight decay 0.01.</p>
-      <p><strong>Result:</strong> val_loss = 2.3995 (new record across all models).</p>
-    </section>
+          <h3>3.4 Phase 3: Instruction Fine-tuning</h3>
+          <p><strong>Data:</strong> Merged instruction dataset (75,502 examples) — 57K curated chat instructions, 19,944 reasoning/CoT examples, ~200 pretrain replay examples (to prevent catastrophic forgetting).</p>
+          <p><strong>Chat Format:</strong> ChatML with <code>&lt;|im_start|&gt;</code> / <code>&lt;|im_end|&gt;</code> tokens, loss computed only on assistant responses.</p>
+          <p><strong>Anti-repetition Training:</strong> Label smoothing (0.1), Unlikelihood training (alpha=0.5), Entropy regularization (beta=0.01). This triple-technique approach eliminates severe repetition observed in early versions.</p>
+          <p><strong>Configuration:</strong> Learning rate 2e-5, cosine schedule, 12,000 steps, weight decay 0.01.</p>
+          <p><strong>Result:</strong> val_loss = 2.3995 (new record across all models).</p>
+        </section>
 
-    <!-- 4. Experiments -->
-    <section id="experiments">
-      <h2>4. Experiments and Ablations</h2>
+        <!-- 4. Experiments -->
+        <section id="experiments">
+          <h2>4. Experiments and Ablations</h2>
 
-      <h3>4.1 Model Variants</h3>
-      <table>
-        <thead><tr><th>Model</th><th>Params</th><th>Architecture</th><th>Pretrain Loss</th><th>Finetune Loss</th></tr></thead>
-        <tbody>
-          <tr><td>10M v2 baseline</td><td>10.7M</td><td>Deep-narrow, sharing</td><td>1.92</td><td>3.92</td></tr>
-          <tr><td>10M MTP</td><td>10.7M</td><td>+ Multi-Token Prediction</td><td>2.10</td><td>3.45</td></tr>
-          <tr><td>10M Enhanced</td><td>10.7M</td><td>+ DWA + VR + Registers</td><td>3.73</td><td>2.92</td></tr>
-          <tr><td>10M Dream</td><td>10.7M</td><td>Ternary + Looped</td><td>3.81</td><td>2.98</td></tr>
-          <tr><td>10M Synthetic-only</td><td>10.7M</td><td>Enhanced, synthetic pretrain</td><td>1.96</td><td>3.62</td></tr>
-          <tr><td><strong>10M Optimal</strong></td><td><strong>10.7M</strong></td><td><strong>Enhanced + 3-phase</strong></td><td><strong>4.39</strong></td><td><strong>2.40</strong></td></tr>
-          <tr><td>30M v2 (reference)</td><td>30.0M</td><td>Deep-narrow, sharing</td><td>3.26</td><td>2.61</td></tr>
-        </tbody>
-      </table>
+          <h3>4.1 Model Variants</h3>
+          <table>
+            <thead><tr><th>Model</th><th>Params</th><th>Architecture</th><th>Pretrain Loss</th><th>Finetune Loss</th></tr></thead>
+            <tbody>
+              <tr><td>10M v2 baseline</td><td>10.7M</td><td>Deep-narrow, sharing</td><td>1.92</td><td>3.92</td></tr>
+              <tr><td>10M MTP</td><td>10.7M</td><td>+ Multi-Token Prediction</td><td>2.10</td><td>3.45</td></tr>
+              <tr><td>10M Enhanced</td><td>10.7M</td><td>+ DWA + VR + Registers</td><td>3.73</td><td>2.92</td></tr>
+              <tr><td>10M Dream</td><td>10.7M</td><td>Ternary + Looped</td><td>3.81</td><td>2.98</td></tr>
+              <tr><td>10M Synthetic-only</td><td>10.7M</td><td>Enhanced, synthetic pretrain</td><td>1.96</td><td>3.62</td></tr>
+              <tr><td><strong>10M Optimal</strong></td><td><strong>10.7M</strong></td><td><strong>Enhanced + 3-phase</strong></td><td><strong>4.39</strong></td><td><strong>2.40</strong></td></tr>
+              <tr><td>30M v2 (reference)</td><td>30.0M</td><td>Deep-narrow, sharing</td><td>3.26</td><td>2.61</td></tr>
+            </tbody>
+          </table>
 
-      <h3>4.2 Key Findings</h3>
-      <p><strong>Finding 1: Low pretrain loss ≠ good downstream performance.</strong> The synthetic-only model achieved the best pretrain loss (1.96) but one of the worst finetune losses (3.62). Conversely, the Optimal model had the highest pretrain loss (4.39) but the best finetune loss (2.40).</p>
-      <p><strong>Finding 2: The 3-phase pipeline enables 10M to beat 30M.</strong> Our 10M Optimal (val_loss 2.40) significantly outperforms our best 30M model (val_loss 2.61), despite having 3x fewer parameters.</p>
-      <p><strong>Finding 3: Anti-repetition training is essential at this scale.</strong> Without the triple anti-repetition techniques, all models exhibited some degree of repetitive generation. With it, zero sequence loops across 20 free-generation tests.</p>
-      <p><strong>Finding 4: Architectural enhancements compound.</strong> DenseFormer + Value Residual + Registers together improve finetune loss by ~1.0 point compared to baseline.</p>
-      <p><strong>Finding 5: Ternary quantization doesn't work at this scale.</strong> The Dream architecture resulted in the worst instruction-following rate (28%) with incoherent generation.</p>
+          <h3>4.2 Key Findings</h3>
+          <p><strong>Finding 1: Low pretrain loss ≠ good downstream performance.</strong> The synthetic-only model achieved the best pretrain loss (1.96) but one of the worst finetune losses (3.62). Conversely, the Optimal model had the highest pretrain loss (4.39) but the best finetune loss (2.40).</p>
+          <p><strong>Finding 2: The 3-phase pipeline enables 10M to beat 30M.</strong> Our 10M Optimal (val_loss 2.40) significantly outperforms our best 30M model (val_loss 2.61), despite having 3x fewer parameters.</p>
+          <p><strong>Finding 3: Anti-repetition training is essential at this scale.</strong> Without the triple anti-repetition techniques, all models exhibited some degree of repetitive generation. With it, zero sequence loops across 20 free-generation tests.</p>
+          <p><strong>Finding 4: Architectural enhancements compound.</strong> DenseFormer + Value Residual + Registers together improve finetune loss by ~1.0 point compared to baseline.</p>
+          <p><strong>Finding 5: Ternary quantization doesn't work at this scale.</strong> The Dream architecture resulted in the worst instruction-following rate (28%) with incoherent generation.</p>
 
-      <h3>4.3 Benchmark Results</h3>
-      <p>Standard academic benchmarks (0-shot, 1000 examples per task):</p>
-      <table>
-        <thead><tr><th>Benchmark</th><th>Score</th><th>Random</th><th>Delta</th></tr></thead>
-        <tbody>
-          <tr><td>BLiMP (Grammar)</td><td><strong>73.3%</strong></td><td>50.0%</td><td>+23.3</td></tr>
-          <tr><td>HellaSwag (Commonsense)</td><td><strong>32.4%</strong></td><td>25.0%</td><td>+7.4</td></tr>
-          <tr><td>ARC-Easy (Science)</td><td><strong>30.6%</strong></td><td>25.0%</td><td>+5.6</td></tr>
-          <tr><td>PIQA (Physical Intuition)</td><td><strong>54.7%</strong></td><td>50.0%</td><td>+4.7</td></tr>
-          <tr><td>Winogrande (Coreference)</td><td>50.3%</td><td>50.0%</td><td>+0.3</td></tr>
-          <tr><td>LAMBADA (Last Word)</td><td><strong>8.8%</strong></td><td>0.0%</td><td>+8.8</td></tr>
-          <tr><td>Wikitext-2 PPL</td><td><strong>224.2</strong></td><td>—</td><td>—</td></tr>
-        </tbody>
-      </table>
-      <p>BLiMP is the standout result, with several subtasks scoring above 90%: sentential negation NPI licensor (100%), existential there quantifiers (95.2%), wh-vs-that no gap long distance (95.1%).</p>
-      <p>For comparison, the Super Tiny Language Models paper (2405.14159) reported their 50M model scoring 25.6% on HellaSwag and 21% on ARC-Easy. Our 10.7M model outperforms both.</p>
-    </section>
+          <h3>4.3 Benchmark Results</h3>
+          <p>Standard academic benchmarks (0-shot, 1000 examples per task):</p>
+          <table>
+            <thead><tr><th>Benchmark</th><th>Score</th><th>Random</th><th>Delta</th></tr></thead>
+            <tbody>
+              <tr><td>BLiMP (Grammar)</td><td><strong>73.3%</strong></td><td>50.0%</td><td>+23.3</td></tr>
+              <tr><td>HellaSwag (Commonsense)</td><td><strong>32.4%</strong></td><td>25.0%</td><td>+7.4</td></tr>
+              <tr><td>ARC-Easy (Science)</td><td><strong>30.6%</strong></td><td>25.0%</td><td>+5.6</td></tr>
+              <tr><td>PIQA (Physical Intuition)</td><td><strong>54.7%</strong></td><td>50.0%</td><td>+4.7</td></tr>
+              <tr><td>Winogrande (Coreference)</td><td>50.3%</td><td>50.0%</td><td>+0.3</td></tr>
+              <tr><td>LAMBADA (Last Word)</td><td><strong>8.8%</strong></td><td>0.0%</td><td>+8.8</td></tr>
+              <tr><td>Wikitext-2 PPL</td><td><strong>224.2</strong></td><td>—</td><td>—</td></tr>
+            </tbody>
+          </table>
+          <p>BLiMP is the standout result, with several subtasks scoring above 90%: sentential negation NPI licensor (100%), existential there quantifiers (95.2%), wh-vs-that no gap long distance (95.1%).</p>
+          <p>For comparison, the Super Tiny Language Models paper (2405.14159) reported their 50M model scoring 25.6% on HellaSwag and 21% on ARC-Easy. Our 10.7M model outperforms both.</p>
+        </section>
 
-    <!-- 5. Qualitative -->
-    <section id="qualitative">
-      <h2>5. Qualitative Analysis</h2>
+        <!-- 5. Qualitative -->
+        <section id="qualitative">
+          <h2>5. Qualitative Analysis</h2>
 
-      <h3>5.1 Generation Examples</h3>
-      <p><strong>Identity awareness:</strong></p>
+          <h3>5.1 Generation Examples</h3>
+          <p><strong>Identity awareness:</strong></p>
 <pre><code>User: What is your name?
 Brandon-Tiny: I'm Brandon Tiny, a small language model designed
 to help in limited environments.</code></pre>
 
-      <p><strong>Creative writing:</strong></p>
+          <p><strong>Creative writing:</strong></p>
 <pre><code>User: Tell me a short story about a cat.
 Brandon-Tiny: Once upon a time, there was an old but young cat
 named Charlie who lived in the small town of Pagima. Every day,
 he set out on adventures...</code></pre>
 
-      <p><strong>Factual (with hallucination):</strong></p>
+          <p><strong>Factual (with hallucination):</strong></p>
 <pre><code>User: What is the capital of France?
 Brandon-Tiny: The capital of the French Empire was Goé. [HALLUCINATION]</code></pre>
 
-      <h3>5.2 Failure Modes</h3>
-      <ul>
-        <li><strong>Factual hallucination:</strong> Confidently generates plausible but incorrect facts</li>
-        <li><strong>Mathematical inability:</strong> Cannot reliably perform arithmetic</li>
-        <li><strong>Vocabulary artifacts:</strong> Occasionally produces garbled words ("cocooked", "tated")</li>
-        <li><strong>Template pollution:</strong> Some responses include training artifacts</li>
-      </ul>
-    </section>
+          <h3>5.2 Failure Modes</h3>
+          <ul>
+            <li><strong>Factual hallucination:</strong> Confidently generates plausible but incorrect facts</li>
+            <li><strong>Mathematical inability:</strong> Cannot reliably perform arithmetic</li>
+            <li><strong>Vocabulary artifacts:</strong> Occasionally produces garbled words ("cocooked", "tated")</li>
+            <li><strong>Template pollution:</strong> Some responses include training artifacts</li>
+          </ul>
+        </section>
 
-    <!-- 6. Infrastructure -->
-    <section id="infrastructure">
-      <h2>6. Infrastructure</h2>
+        <!-- 6. Infrastructure -->
+        <section id="infrastructure">
+          <h2>6. Infrastructure</h2>
 
-      <h3>6.1 Hardware</h3>
-      <p>All training on a single NVIDIA RTX 3090 (24GB VRAM):</p>
-      <ul>
-        <li>Phase 1: ~3 hours (15K steps)</li>
-        <li>Phase 2: ~1.5 hours (7.5K steps)</li>
-        <li>Phase 3: ~2 hours (12K steps)</li>
-        <li>Total: ~6.5 hours wall clock time</li>
-      </ul>
+          <h3>6.1 Hardware</h3>
+          <p>All training on a single NVIDIA RTX 3090 (24GB VRAM):</p>
+          <ul>
+            <li>Phase 1: ~3 hours (15K steps)</li>
+            <li>Phase 2: ~1.5 hours (7.5K steps)</li>
+            <li>Phase 3: ~2 hours (12K steps)</li>
+            <li>Total: ~6.5 hours wall clock time</li>
+          </ul>
 
-      <h3>6.2 Inference</h3>
-      <ul>
-        <li>Speed: 21 tokens/second on RTX 3090</li>
-        <li>VRAM: 51.5 MB allocated</li>
-        <li>Model size: 42.8 MB (fp32), 21.4 MB (bf16)</li>
-      </ul>
+          <h3>6.2 Inference</h3>
+          <ul>
+            <li>Speed: 21 tokens/second on RTX 3090</li>
+            <li>VRAM: 51.5 MB allocated</li>
+            <li>Model size: 42.8 MB (fp32), 21.4 MB (bf16)</li>
+          </ul>
 
-      <h3>6.3 Tokenizer</h3>
-      <p>Custom SentencePiece BPE tokenizer with 8,192 vocabulary, trained on TinyStories + SmolLM text. Includes ChatML special tokens (<code>&lt;|im_start|&gt;</code>, <code>&lt;|im_end|&gt;</code>, <code>&lt;|bos|&gt;</code>, <code>&lt;|eos|&gt;</code>, <code>&lt;|pad|&gt;</code>).</p>
-    </section>
+          <h3>6.3 Tokenizer</h3>
+          <p>Custom SentencePiece BPE tokenizer with 8,192 vocabulary, trained on TinyStories + SmolLM text. Includes ChatML special tokens (<code>&lt;|im_start|&gt;</code>, <code>&lt;|im_end|&gt;</code>, <code>&lt;|bos|&gt;</code>, <code>&lt;|eos|&gt;</code>, <code>&lt;|pad|&gt;</code>).</p>
+        </section>
 
-    <!-- 7. Related Work -->
-    <section id="related">
-      <h2>7. Related Work</h2>
-      <p><strong>MobileLLM (Liu et al., 2024):</strong> Introduced deep-narrow architectures and block sharing for sub-billion models. We adopt their block sharing strategy at 10M scale.</p>
-      <p><strong>SmolLM2 (Allal et al., 2025):</strong> Data-centric approach to training small LMs. Their 135M model serves as our primary comparison point.</p>
-      <p><strong>Super Tiny Language Models (Hillier et al., 2024):</strong> Most directly comparable work targeting 10–100M parameters. Their 50M baseline scored near random on standard benchmarks.</p>
-      <p><strong>DenseFormer (Pagliardini et al., 2024):</strong> Depth-Weighted Averaging that we apply to improve gradient flow.</p>
-      <p><strong>Value Residual Learning (Wang et al., 2024):</strong> Preserving early-layer value representations, particularly beneficial in deep networks.</p>
-      <p><strong>MiniCPM (Hu et al., 2024):</strong> WSD learning rate schedule that we use for pre-training.</p>
-      <p><strong>MiniPLM (ICLR 2025):</strong> Showed reverse KLD is superior for distilling into small students.</p>
-    </section>
+        <!-- 7. Related Work -->
+        <section id="related">
+          <h2>7. Related Work</h2>
+          <p><strong>MobileLLM (Liu et al., 2024):</strong> Introduced deep-narrow architectures and block sharing for sub-billion models. We adopt their block sharing strategy at 10M scale.</p>
+          <p><strong>SmolLM2 (Allal et al., 2025):</strong> Data-centric approach to training small LMs. Their 135M model serves as our primary comparison point.</p>
+          <p><strong>Super Tiny Language Models (Hillier et al., 2024):</strong> Most directly comparable work targeting 10–100M parameters. Their 50M baseline scored near random on standard benchmarks.</p>
+          <p><strong>DenseFormer (Pagliardini et al., 2024):</strong> Depth-Weighted Averaging that we apply to improve gradient flow.</p>
+          <p><strong>Value Residual Learning (Wang et al., 2024):</strong> Preserving early-layer value representations, particularly beneficial in deep networks.</p>
+          <p><strong>MiniCPM (Hu et al., 2024):</strong> WSD learning rate schedule that we use for pre-training.</p>
+          <p><strong>MiniPLM (Gu et al., ICLR 2025):</strong> Showed reverse KLD is superior for distilling into small students.</p>
+        </section>
 
-    <!-- 8. Limitations -->
-    <section id="limitations">
-      <h2>8. Limitations</h2>
-      <ul>
-        <li><strong>Not suitable for factual tasks:</strong> The model hallucinates freely.</li>
-        <li><strong>English only:</strong> Trained exclusively on English data.</li>
-        <li><strong>Short context:</strong> 512 token maximum sequence length.</li>
-        <li><strong>No safety alignment:</strong> No RLHF/DPO training.</li>
-        <li><strong>Evaluation challenges:</strong> Standard LLM benchmarks (MMLU, GSM8K) are meaningless at this scale.</li>
-      </ul>
-    </section>
+        <!-- 8. Limitations -->
+        <section id="limitations">
+          <h2>8. Limitations</h2>
+          <ul>
+            <li><strong>Not suitable for factual tasks:</strong> The model hallucinates freely.</li>
+            <li><strong>English only:</strong> Trained exclusively on English data.</li>
+            <li><strong>Short context:</strong> 512 token maximum sequence length.</li>
+            <li><strong>No safety alignment:</strong> No RLHF/DPO training.</li>
+            <li><strong>Evaluation challenges:</strong> Standard LLM benchmarks (MMLU, GSM8K) are meaningless at this scale.</li>
+          </ul>
+        </section>
 
-    <!-- 9. Conclusion -->
-    <section id="conclusion">
-      <h2>9. Conclusion</h2>
-      <p>Brandon-Tiny 10M demonstrates that with careful architecture design, multi-phase training, and knowledge distillation, a 10.7M parameter model can achieve instruction-following capabilities previously associated with much larger models. Our 3-phase pipeline (Pretrain → Distill → Finetune) is the key innovation, enabling the model to outperform a 30M parameter counterpart on fine-tuning loss. The complete training pipeline runs in under 7 hours on a single consumer GPU.</p>
-      <p>Future work includes: (1) DPO/GRPO alignment training, (2) scaling the 3-phase pipeline to our 110M model, and (3) quantization for true edge deployment.</p>
-    </section>
+        <!-- 9. Conclusion -->
+        <section id="conclusion">
+          <h2>9. Conclusion</h2>
+          <p>Brandon-Tiny 10M demonstrates that with careful architecture design, multi-phase training, and knowledge distillation, a 10.7M parameter model can achieve instruction-following capabilities previously associated with much larger models. Our 3-phase pipeline (Pretrain → Distill → Finetune) is the key innovation, enabling the model to outperform a 30M parameter counterpart on fine-tuning loss. The complete training pipeline runs in under 7 hours on a single consumer GPU.</p>
+          <p>Future work includes: (1) DPO/GRPO alignment training, (2) scaling the 3-phase pipeline to our 110M model, and (3) quantization for true edge deployment.</p>
+        </section>
 
-    <!-- 10. Reproducibility -->
-    <section id="reproducibility">
-      <h2>10. Reproducibility</h2>
-      <p>All code, configurations, and training scripts are available at <a href="https://github.com/xaskasdf/brandon-tiny">github.com/xaskasdf/brandon-tiny</a>. The complete training pipeline can be run with:</p>
+        <!-- 10. Reproducibility -->
+        <section id="reproducibility">
+          <h2>10. Reproducibility</h2>
+          <p>All code, configurations, and training scripts are available at <a href="https://github.com/xaskasdf/brandon-tiny">github.com/xaskasdf/brandon-tiny</a>. The complete training pipeline can be run with:</p>
 <pre><code>python scripts/train_10m_optimal.py</code></pre>
-      <p>Model checkpoints and the tokenizer are available on <a href="https://huggingface.co/xaskasdf/brandon-tiny-10m-instruct">HuggingFace</a>.</p>
-    </section>
+          <p>Model checkpoints and the tokenizer are available on <a href="https://huggingface.co/xaskasdf/brandon-tiny-10m-instruct">HuggingFace</a>.</p>
+        </section>
 
-    <!-- References -->
-    <section id="references">
-      <h2>References</h2>
-      <ul>
-        <li>Liu, Z., et al. (2024). MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases. <em>ICML 2024</em>.</li>
-        <li>Allal, L.B., et al. (2025). SmolLM2: When Smol Goes Big — Data-Centric Training of a Small Language Model. <em>arXiv:2502.02737</em>.</li>
-        <li>Hillier, D., Guertler, L., Tan, C., Agrawal, P., Chen, R., Cheng, B. (2024). Super Tiny Language Models. <em>arXiv:2405.14159</em>.</li>
-        <li>Pagliardini, M., Mohtashami, A., Fleuret, F., Jaggi, M. (2024). DenseFormer: Enhancing Information Flow in Transformers via Depth Weighted Averaging. <em>arXiv:2402.02622</em>.</li>
-        <li>Wang, Z., et al. (2024). Value Residual Learning For Alleviating Attention Concentration In Transformers. <em>arXiv:2410.17897</em>. ACL 2025.</li>
-        <li>Darcet, T., Oquab, M., Mairal, J., Bojanowski, P. (2024). Vision Transformers Need Registers. <em>ICLR 2024</em>.</li>
-        <li>Hu, S., et al. (2024). MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies. <em>arXiv:2404.06395</em>.</li>
-        <li>Gu, Y., Zhou, H., Meng, F., Zhou, J., Huang, M. (2025). MiniPLM: Knowledge Distillation for Pre-Training Language Models. <em>ICLR 2025</em>. arXiv:2410.17215.</li>
-        <li>Welleck, S., et al. (2020). Neural Text Generation with Unlikelihood Training. <em>ICLR 2020</em>.</li>
-      </ul>
-    </section>
+        <!-- References -->
+        <section id="references">
+          <h2>References</h2>
+          <ul>
+            <li>Liu, Z., et al. (2024). MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases. <em>ICML 2024</em>.</li>
+            <li>Allal, L.B., et al. (2025). SmolLM2: When Smol Goes Big — Data-Centric Training of a Small Language Model. <em>arXiv:2502.02737</em>.</li>
+            <li>Hillier, D., Guertler, L., Tan, C., Agrawal, P., Chen, R., Cheng, B. (2024). Super Tiny Language Models. <em>arXiv:2405.14159</em>.</li>
+            <li>Pagliardini, M., Mohtashami, A., Fleuret, F., Jaggi, M. (2024). DenseFormer: Enhancing Information Flow in Transformers via Depth Weighted Averaging. <em>arXiv:2402.02622</em>.</li>
+            <li>Wang, Z., et al. (2024). Value Residual Learning For Alleviating Attention Concentration In Transformers. <em>arXiv:2410.17897</em>. ACL 2025.</li>
+            <li>Darcet, T., Oquab, M., Mairal, J., Bojanowski, P. (2024). Vision Transformers Need Registers. <em>ICLR 2024</em>.</li>
+            <li>Hu, S., et al. (2024). MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies. <em>arXiv:2404.06395</em>.</li>
+            <li>Gu, Y., Zhou, H., Meng, F., Zhou, J., Huang, M. (2025). MiniPLM: Knowledge Distillation for Pre-Training Language Models. <em>ICLR 2025</em>. arXiv:2410.17215.</li>
+            <li>Welleck, S., et al. (2020). Neural Text Generation with Unlikelihood Training. <em>ICLR 2020</em>.</li>
+          </ul>
+        </section>
 
-  </div>
+      </div>
 
-  <footer>
-    <div class="container">
-      <p>Brandon-Tiny · Apache 2.0 · <a href="index.html">Home</a> · <a href="https://github.com/xaskasdf/brandon-tiny">GitHub</a></p>
-    </div>
-  </footer>
+      <footer>
+        <div class="container">
+          <p>Brandon-Tiny · Apache 2.0 · <a href="index.html">Home</a> · <a href="https://github.com/xaskasdf/brandon-tiny">GitHub</a></p>
+        </div>
+      </footer>
+
+    </div><!-- .paper-main -->
+
+  </div><!-- .paper-layout -->
+
+  <!-- Active section highlight -->
+  <script>
+    (function() {
+      var links = document.querySelectorAll('.paper-nav a[data-section]');
+      var sections = [];
+      links.forEach(function(link) {
+        var id = link.getAttribute('data-section');
+        var el = document.getElementById(id);
+        if (el) sections.push({ id: id, el: el, link: link });
+      });
+
+      function update() {
+        var scrollY = window.scrollY || document.documentElement.scrollTop;
+        var current = '';
+        for (var i = 0; i < sections.length; i++) {
+          if (sections[i].el.offsetTop - 80 <= scrollY) {
+            current = sections[i].id;
+          }
+        }
+        links.forEach(function(link) {
+          if (link.getAttribute('data-section') === current) {
+            link.classList.add('active');
+          } else {
+            link.classList.remove('active');
+          }
+        });
+      }
+
+      window.addEventListener('scroll', update, { passive: true });
+      update();
+    })();
+  </script>
 
 </body>
 </html>
