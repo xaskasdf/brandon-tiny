@@ -258,7 +258,7 @@ Custom SentencePiece BPE tokenizer with 8,192 vocabulary, trained on a mix of Ti
 
 **SmolLM2 (Allal et al., 2025):** Data-centric approach to training small LMs. Their 135M model serves as our primary comparison point.
 
-**Super Tiny Language Models (Galimzhanova et al., 2024):** Most directly comparable work targeting 10-100M parameters. Their 50M baseline scored near random on standard benchmarks (ARC-Easy 21%, HellaSwag 25.6%).
+**Super Tiny Language Models (Hillier et al., 2024):** Most directly comparable work targeting 10-100M parameters. Their 50M baseline scored near random on standard benchmarks (ARC-Easy 21%, HellaSwag 25.6%).
 
 **DenseFormer (Pagliardini et al., 2024):** Depth-Weighted Averaging that we apply to improve gradient flow.
 
@@ -298,10 +298,10 @@ See [references.bib](references.bib) for full BibTeX entries.
 
 - Liu, Z., et al. (2024). MobileLLM: Optimizing Sub-billion Parameter Language Models for On-Device Use Cases. *ICML 2024*.
 - Allal, L.B., et al. (2025). SmolLM2: When Smol Goes Big — Data-Centric Training of a Small Language Model. *arXiv:2502.02737*.
-- Galimzhanova, M., et al. (2024). Super Tiny Language Models. *arXiv:2405.14159*.
-- Pagliardini, M., et al. (2024). DenseFormer: Enhancing Information Flow in Transformers via Depth Weighted Averaging. *arXiv:2402.02622*.
-- Wang, Z., et al. (2024). Value Residual Learning For Alleviating Attention Head Redundancy. *arXiv:2410.17276*.
-- Darcet, T., et al. (2024). Vision Transformers Need Registers. *ICLR 2024*.
+- Hillier, D., Guertler, L., Tan, C., Agrawal, P., Chen, R., Cheng, B. (2024). Super Tiny Language Models. *arXiv:2405.14159*.
+- Pagliardini, M., Mohtashami, A., Fleuret, F., Jaggi, M. (2024). DenseFormer: Enhancing Information Flow in Transformers via Depth Weighted Averaging. *arXiv:2402.02622*.
+- Wang, Z., et al. (2024). Value Residual Learning For Alleviating Attention Concentration In Transformers. *arXiv:2410.17897*. ACL 2025.
+- Darcet, T., Oquab, M., Mairal, J., Bojanowski, P. (2024). Vision Transformers Need Registers. *ICLR 2024*.
 - Hu, S., et al. (2024). MiniCPM: Unveiling the Potential of Small Language Models with Scalable Training Strategies. *arXiv:2404.06395*.
-- MiniPLM (2025). Knowledge Distillation for Small Language Models. *ICLR 2025*.
+- Gu, Y., Zhou, H., Meng, F., Zhou, J., Huang, M. (2025). MiniPLM: Knowledge Distillation for Pre-Training Language Models. *ICLR 2025*. arXiv:2410.17215.
 - Welleck, S., et al. (2020). Neural Text Generation with Unlikelihood Training. *ICLR 2020*.

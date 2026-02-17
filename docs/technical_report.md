@@ -258,7 +258,7 @@ Custom SentencePiece BPE tokenizer with 8,192 vocabulary, trained on a mix of Ti
 
 **SmolLM2 (Allal et al., 2025):** Data-centric approach to training small LMs. Their 135M model serves as our primary comparison point.
 
-**Super Tiny Language Models (Galimzhanova et al., 2024):** Most directly comparable work targeting 10-100M parameters. Their 50M baseline scored near random on standard benchmarks (ARC-Easy 21%, HellaSwag 25.6%).
+**Super Tiny Language Models (Hillier et al., 2024):** Most directly comparable work targeting 10-100M parameters. Their 50M baseline scored near random on standard benchmarks (ARC-Easy 21%, HellaSwag 25.6%).
 
 **DenseFormer (Pagliardini et al., 2024):** Depth-Weighted Averaging that we apply to improve gradient flow.
 
