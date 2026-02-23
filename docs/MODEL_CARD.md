@@ -324,13 +324,13 @@ print(response)
 
 This model is the result of systematic exploration across 8 architectural variants. Key insight: **training methodology matters more than parameter count at this scale.** The 3-phase pipeline (Pretrain → Distill → Finetune) enabled a 10M model to outperform 30M models trained with a standard 2-phase approach.
 
-For the full experimental report, see our [technical report](docs/technical_report.md).
+For the full experimental report, see our [technical report](https://github.com/xaskasdf/brandon-tiny/blob/master/docs/technical_report.md).
 
 ## Links
 
 - **Website:** [naranjositos.tech](https://naranjositos.tech/)
 - **Code:** [github.com/xaskasdf/brandon-tiny](https://github.com/xaskasdf/brandon-tiny)
-- **Technical Report:** [docs/technical_report.md](docs/technical_report.md)
+- **Technical Report:** [technical_report.md](https://github.com/xaskasdf/brandon-tiny/blob/master/docs/technical_report.md)
 - **Instruction Dataset:** [xaskasdf/brandon-tiny-instruct](https://huggingface.co/datasets/xaskasdf/brandon-tiny-instruct)
 - **Synthetic Pretrain Data:** [xaskasdf/brandon-tiny-synthetic-pretrain](https://huggingface.co/datasets/xaskasdf/brandon-tiny-synthetic-pretrain)
 
