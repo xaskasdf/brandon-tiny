@@ -330,7 +330,7 @@ For the full experimental report, see our [technical report](https://github.com/
 
 - **Website:** [naranjositos.tech](https://naranjositos.tech/)
 - **Code:** [github.com/xaskasdf/brandon-tiny](https://github.com/xaskasdf/brandon-tiny)
-- **Technical Report:** [technical_report.md](https://github.com/xaskasdf/brandon-tiny/blob/master/docs/technical_report.md)
+- **Technical Report:** [technical_report.md](https://github.com/xaskasdf/brandon-tiny/blob/master/docs/technical_report.md) | [PDF](https://factory.naranjositos.tech/downloads/brandon_tiny_10m.pdf)
 - **Instruction Dataset:** [xaskasdf/brandon-tiny-instruct](https://huggingface.co/datasets/xaskasdf/brandon-tiny-instruct)
 - **Synthetic Pretrain Data:** [xaskasdf/brandon-tiny-synthetic-pretrain](https://huggingface.co/datasets/xaskasdf/brandon-tiny-synthetic-pretrain)
 
