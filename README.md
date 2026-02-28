@@ -9,7 +9,7 @@ Ultra-small instruction-following language models (10M-110M parameters) that run
 
 ## The Story
 
-We wanted a language model that could run natively on a PlayStation 2's Emotion Engine (32 MB VRAM). Inspired by Karpathy's TinyStories, we searched for existing models small enough and couldn't find anything decent. So we built one.
+We wanted a language model that could run natively on a PlayStation 2's Emotion Engine (32 MB RAM, 4 MB VRAM). Inspired by Karpathy's TinyStories, we searched for existing models small enough and couldn't find anything decent. So we built one.
 
 The name comes from a Cloudflare tunnel URL (`sugar-alaska-brandon-tiny.trycloudflare.com`) generated while serving a custom agentic chat. It sounded like a language model name, and after enough jokes, it stuck.
 
@@ -132,7 +132,7 @@ Key finding: **training methodology > parameter count.** The 10M Optimal (val_lo
 
 - **Training:** Single NVIDIA RTX 3090 (24 GB)
 - **Inference:** 21 tokens/sec, 51 MB VRAM
-- **Target:** PlayStation 2 Emotion Engine (32 MB VRAM)
+- **Target:** PlayStation 2 Emotion Engine (32 MB RAM, 4 MB VRAM)
 
 ## Citation
 

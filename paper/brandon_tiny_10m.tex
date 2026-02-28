@@ -40,7 +40,7 @@ We present Brandon-Tiny 10M, a 10.7M parameter instruction-following language mo
 
 The dominant trend in language modeling has been scaling up: more parameters, more data, more compute. Yet practical deployment often demands the opposite---models that run on edge devices, embedded systems, or resource-constrained environments. While research on efficient LLMs has flourished \citep{mobilellm2024, smollm2-2025}, most work targets the 125M--7B range. Models under 50M parameters remain largely unexplored for instruction-following tasks.
 
-Our motivation was concrete: we wanted a language model capable of running natively on a PlayStation 2's Emotion Engine, which has only 32 MB of VRAM. Inspired by Karpathy's TinyStories, we searched for existing models small enough for this constraint and found none with instruction-following capabilities. The project's name---Brandon Tiny---originated from a Cloudflare tunnel URL (\texttt{sugar-alaska-brandon-tiny.trycloudflare.com}) generated while serving a custom agentic chat, which sounded so much like a language model name that it stuck.
+Our motivation was concrete: we wanted a language model capable of running natively on a PlayStation 2's Emotion Engine, which has 32 MB of RAM and 4 MB of VRAM. Inspired by TinyStories \citep{tinystories2023}, we searched for existing models small enough for this constraint and found none with instruction-following capabilities. The project's name---Brandon Tiny---originated from a Cloudflare tunnel URL (\texttt{sugar-alaska-brandon-tiny.trycloudflare.com}) generated while serving a custom agentic chat, which sounded so much like a language model name that it stuck.
 
 We address this gap by systematically exploring what is achievable at 10.7M parameters. Our key contributions:
 \begin{enumerate}
@@ -50,11 +50,31 @@ We address this gap by systematically exploring what is achievable at 10.7M para
     \item \textbf{Practical guidelines} for training sub-50M parameter instruction models on consumer hardware.
 \end{enumerate}
 
+\section{Related Work}
+
+\textbf{MobileLLM} \citep{mobilellm2024}: Introduced deep-narrow architectures and block sharing for sub-billion models, demonstrating that depth matters more than width at small scale. We adopt their block sharing strategy at 10M scale.
+
+\textbf{SmolLM2} \citep{smollm2-2025}: Data-centric approach to training small LMs. Their 135M model serves as our primary comparison point for data curation methodology.
+
+\textbf{Super Tiny Language Models} \citep{supertiny2024}: Most directly comparable work targeting 10--100M parameters. Their 50M baseline scored near random on standard benchmarks (ARC-Easy 21\%, HellaSwag 25.6\%). Note: direct comparison is approximate due to differences in evaluation methodology, tokenizer, and data (see Section~\ref{sec:benchmarks}).
+
+\textbf{DenseFormer} \citep{denseformer2024}: Depth-Weighted Averaging that we apply to improve gradient flow in deep-narrow architectures.
+
+\textbf{Value Residual Learning} \citep{valueresidual2024}: Preserving early-layer value representations, particularly beneficial in deep networks where attention concentration degrades lower-layer features.
+
+\textbf{MiniCPM} \citep{minicpm2024}: WSD learning rate schedule that we use for pre-training, providing consistent improvements in the decay phase.
+
+\textbf{MiniPLM} \citep{miniplm2025}: Showed reverse KLD is superior for distilling into small students. We adopt this for Phase 2.
+
+\textbf{TinyStories} \citep{tinystories2023}: Demonstrated that small models can generate coherent text when trained on curated, high-quality data. Our work extends this to instruction-following at even smaller scale.
+
+\textbf{Llama 2} \citep{llama2-2023}: Our base architecture. We adopt the core transformer design (RMSNorm, SwiGLU \citep{swiglu2020}, RoPE \citep{rope2024}, GQA \citep{gqa2023}) at 10M scale with deep-narrow modifications.
+
 \section{Architecture}
 
 \subsection{Base Architecture}
 
-Brandon-Tiny 10M follows the Llama 2 architecture with modifications from MobileLLM \citep{mobilellm2024} (deep-narrow design with block sharing):
+Brandon-Tiny 10M follows the Llama 2 \citep{llama2-2023} architecture with modifications from MobileLLM \citep{mobilellm2024} (deep-narrow design with block sharing):
 
 \begin{table}[h]
 \centering
@@ -125,7 +145,7 @@ Phase 3: Instruction Finetune   -> Task-specific behavior + anti-repetition
 
 \subsection{Phase 1: Foundation Pre-training}
 
-\textbf{Data:} Mixed corpus of 600M tokens---40\% Wikipedia English, 30\% SmolLM Corpus \citep{smollm2-2025}, 30\% Synthetic data (LLM-generated diverse topics).
+\textbf{Data:} Mixed corpus of 600M tokens---40\% Wikipedia English, 30\% SmolLM Corpus \citep{smollm2-2025}, 30\% Synthetic data (generated via GPT-4o-mini across diverse topics: science, history, technology, etc.).
 
 \textbf{Configuration:} Learning rate $8 \times 10^{-4}$ with WSD schedule (Warmup-Stable-Decay from MiniCPM \citep{minicpm2024}), 15,000 steps, effective batch size 65,536 tokens/step. Warmup: 500 steps, Stable: 70\%, Decay: 20\%. Weight decay 0.1, gradient clipping 1.0, bfloat16 precision.
 
@@ -175,9 +195,9 @@ We trained 8 model variants to understand which factors most influence downstrea
 Model & Params & Architecture & Data & Pretrain & Finetune \\
 \midrule
 10M v2 baseline & 10.7M & Deep-narrow, sharing & TS+SmolLM & 1.92 & 3.92 \\
-10M MTP & 10.7M & + Multi-Token Pred. & TS+SmolLM & 2.10 & 3.45 \\
+10M MTP & 10.7M & + Multi-Token Pred.$^*$ & TS+SmolLM & 2.10 & 3.45 \\
 10M Enhanced & 10.7M & + DWA + VR + Reg & Mixed & 3.73 & 2.92 \\
-10M Enhanced v2 & 10.7M & Same, more data & Mixed & 3.73 & 2.92 \\
+10M Enhanced v2 & 10.7M & Same arch, ext.\ data & Mixed (diverse) & 3.73 & 2.92$^{**}$ \\
 10M Dream & 10.7M & Ternary + Looped & Mixed & 3.81 & 2.98 \\
 10M Synth-only & 10.7M & Enhanced, synth & 100\% synth & 1.96 & 3.62 \\
 \textbf{10M Optimal} & \textbf{10.7M} & \textbf{Enhanced + 3-phase} & \textbf{Wiki+Mixed} & \textbf{4.39} & \textbf{2.40} \\
@@ -186,11 +206,15 @@ Model & Params & Architecture & Data & Pretrain & Finetune \\
 \end{tabular}
 \end{table}
 
+\noindent $^*$MTP: Multi-Token Prediction \citep{mtp2024}, where the model predicts the next $N$ tokens simultaneously via $N$ auxiliary heads. Improved pretrain loss regularity but did not translate to downstream gains at this scale.
+
+\noindent $^{**}$Enhanced v2 achieved identical loss values to Enhanced despite more diverse data. We attribute this to a capacity ceiling: at 10.7M parameters, the enhanced architecture saturates on this training objective without the distillation phase.
+
 \subsection{Key Findings}
 
 \textbf{Finding 1: Low pretrain loss $\neq$ good downstream performance.} The synthetic-only model achieved the best pretrain loss (1.96) but one of the worst finetune losses (3.62). Conversely, the Optimal model had the highest pretrain loss (4.39) but the best finetune loss (2.40). This suggests that diversity and quality of pre-training data matters more than how well the model memorizes it.
 
-\textbf{Finding 2: The 3-phase pipeline enables 10M to beat 30M.} Our 10M Optimal (val\_loss 2.40) significantly outperforms our best 30M model (val\_loss 2.61), despite having 3$\times$ fewer parameters. The key difference is knowledge distillation + better data curation.
+\textbf{Finding 2: The 3-phase pipeline enables 10M to beat 30M.} Our 10M Optimal (val\_loss 2.40) significantly outperforms our best 30M model (val\_loss 2.61), despite having 3$\times$ fewer parameters. The key difference is knowledge distillation + better data curation. \textit{Caveat: validation sets differ between model variants (the 30M was evaluated on its own held-out split), so this comparison reflects training pipeline effectiveness rather than a controlled head-to-head.}
 
 \textbf{Finding 3: Anti-repetition training is essential at this scale.} Without the triple anti-repetition (label smoothing + unlikelihood + entropy reg), all models exhibited some degree of repetitive generation. With it, all tested models achieved zero sequence loops across 20 free-generation tests.
 
@@ -223,7 +247,8 @@ Wikitext-2 PPL & \textbf{224.2} & --- & --- \\
 
 BLiMP is the standout result, with several subtasks scoring above 90\%: sentential negation NPI licensor (100\%), existential there quantifiers (95.2\%), wh-vs-that no gap long distance (95.1\%). This demonstrates genuine grammatical knowledge acquired during training.
 
-For comparison, \citet{supertiny2024} reported their 50M parameter model (5$\times$ our size) scoring 25.6\% on HellaSwag and 21\% on ARC-Easy. Our 10.7M model at 32.4\% and 30.6\% respectively outperforms their 50M baseline on both benchmarks.
+For comparison, \citet{supertiny2024} reported their 50M parameter model (5$\times$ our size) scoring 25.6\% on HellaSwag and 21\% on ARC-Easy. Our 10.7M model at 32.4\% and 30.6\% respectively outperforms their 50M baseline on both benchmarks. \textit{Note: this comparison should be interpreted cautiously---differences in tokenizer vocabulary (8K vs 32K), evaluation subset size (we use 1000 examples per task), and data composition may contribute to the gap alongside genuine architectural and training advantages.}
+\label{sec:benchmarks}
 
 \section{Qualitative Analysis}
 
@@ -286,22 +311,6 @@ All training was performed on a single NVIDIA RTX 3090 (24GB VRAM):
 
 Custom SentencePiece BPE tokenizer with 8,192 vocabulary, trained on a mix of TinyStories and SmolLM text. Includes ChatML special tokens (\texttt{<|im\_start|>}, \texttt{<|im\_end|>}, \texttt{<|bos|>}, \texttt{<|eos|>}, \texttt{<|pad|>}).
 
-\section{Related Work}
-
-\textbf{MobileLLM} \citep{mobilellm2024}: Introduced deep-narrow architectures and block sharing for sub-billion models. We adopt their block sharing strategy at 10M scale.
-
-\textbf{SmolLM2} \citep{smollm2-2025}: Data-centric approach to training small LMs. Their 135M model serves as our primary comparison point.
-
-\textbf{Super Tiny Language Models} \citep{supertiny2024}: Most directly comparable work targeting 10--100M parameters. Their 50M baseline scored near random on standard benchmarks (ARC-Easy 21\%, HellaSwag 25.6\%).
-
-\textbf{DenseFormer} \citep{denseformer2024}: Depth-Weighted Averaging that we apply to improve gradient flow.
-
-\textbf{Value Residual Learning} \citep{valueresidual2024}: Preserving early-layer value representations, particularly beneficial in deep networks.
-
-\textbf{MiniCPM} \citep{minicpm2024}: WSD learning rate schedule that we use for pre-training, providing consistent improvements in the decay phase.
-
-\textbf{MiniPLM} \citep{miniplm2025}: Showed reverse KLD is superior for distilling into small students. We adopt this for Phase 2.
-
 \section{Limitations}
 
 \begin{itemize}
@@ -316,7 +325,9 @@ Custom SentencePiece BPE tokenizer with 8,192 vocabulary, trained on a mix of Ti
 
 Brandon-Tiny 10M demonstrates that with careful architecture design, multi-phase training, and knowledge distillation, a 10.7M parameter model can achieve instruction-following capabilities previously associated with much larger models. Our 3-phase pipeline (Pretrain $\rightarrow$ Distill $\rightarrow$ Finetune) is the key innovation, enabling the model to outperform a 30M parameter counterpart on fine-tuning loss. The complete training pipeline runs in under 7 hours on a single consumer GPU, making this approach accessible for research and experimentation.
 
-Future work includes: (1) DPO/GRPO alignment training, (2) scaling the 3-phase pipeline to our 110M model, and (3) quantization for true edge deployment.
+Since this paper's completion, we have extended Brandon-Tiny into a Vision-Language-Action (VLA) controller for robotics, adding a MobileNetV3-Small vision encoder and 25 discrete action tokens for motor control (see companion paper: \textit{Brandon-VLA}). The VLA pipeline adds three additional training phases: VLA adaptation, vision conditioning, and GRPO online reinforcement learning in a MuJoCo simulation environment.
+
+Additional future work includes: (1) scaling the 3-phase pipeline to our 110M model, (2) quantization for true edge deployment (targeting the PlayStation 2's Emotion Engine), and (3) real-world sim-to-real transfer of the VLA controller.
 
 \section{Reproducibility}
 

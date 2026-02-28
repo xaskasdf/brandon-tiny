@@ -78,7 +78,7 @@ A 10.7M parameter instruction-following language model that punches far above it
 
 ## Why This Exists
 
-We wanted a language model small enough to run natively on a PlayStation 2 -- 32 MB of VRAM on the Emotion Engine, tested on both emulator and real hardware. Inspired by Karpathy's TinyStories, we looked for existing models small enough, and couldn't find anything decent. So we built one.
+We wanted a language model small enough to run natively on a PlayStation 2 -- 32 MB of RAM and 4 MB of VRAM on the Emotion Engine, tested on both emulator and real hardware. Inspired by Karpathy's TinyStories, we looked for existing models small enough, and couldn't find anything decent. So we built one.
 
 The name "Brandon Tiny" comes from a Cloudflare tunnel: one day we ran `cloudflared tunnel` and the random URL came back as something like `sugar-alaska-brandon-tiny.trycloudflare.com`. We were serving a custom agentic chat through it, and the URL looked so much like a language model name that we couldn't stop joking about it. The name stuck.
 
@@ -86,7 +86,7 @@ After 8 model variants, 3 architectural experiments, and one 3-phase training pi
 
 ## Highlights
 
-- **10.7M parameters** -- runs on a PS2 Emotion Engine (32 MB VRAM)
+- **10.7M parameters** -- runs on a PS2 Emotion Engine (32 MB RAM, 4 MB VRAM)
 - **Beats our own 30M model** on fine-tuning loss (2.40 vs 2.61)
 - **Zero repetition loops** across all generation tests
 - **80% instruction following** on 25 diverse prompts
